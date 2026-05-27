@@ -280,18 +280,21 @@ export async function getDb(): Promise<DatabaseSchema> {
 
   const tickets: Record<string, Ticket> = {};
   for (const t of ticketsRows) {
-    tickets[t.id] = {
-      id: t.id,
-      listIndex: t.list_index,
-      numberIndex: t.number_index,
-      status: t.status as any,
-      buyerName: t.buyer_name,
-      buyerPhone: t.buyer_phone,
-      buyerEmail: t.buyer_email,
-      reservedAt: t.reserved_at,
-      paymentId: t.payment_id,
-      paymentMethod: t.payment_method as any
-    };
+    // Filtrar dinámicamente tickets huérfanos de configuraciones anteriores de mayor tamaño
+    if (t.list_index <= config.totalLists && t.number_index <= config.ticketsPerList) {
+      tickets[t.id] = {
+        id: t.id,
+        listIndex: t.list_index,
+        numberIndex: t.number_index,
+        status: t.status as any,
+        buyerName: t.buyer_name,
+        buyerPhone: t.buyer_phone,
+        buyerEmail: t.buyer_email,
+        reservedAt: t.reserved_at,
+        paymentId: t.payment_id,
+        paymentMethod: t.payment_method as any
+      };
+    }
   }
 
   return { config, prizes, tickets };
