@@ -285,11 +285,9 @@ export async function saveDb(data: DatabaseSchema): Promise<void> {
     throw new Error('Supabase no está configurado.');
   }
 
-  // A. Save Configuration (Upsert Row 1)
   const { error: configError } = await supabase
     .from('raffle_config')
-    .upsert({
-      id: 1,
+    .update({
       title: data.config.title,
       description: data.config.description,
       ticket_price: data.config.ticketPrice,
@@ -307,7 +305,8 @@ export async function saveDb(data: DatabaseSchema): Promise<void> {
       flow_secret_key: data.config.flowConfig.secretKey,
       flow_sandbox_mode: data.config.flowConfig.sandboxMode,
       flow_mock_mode: data.config.flowConfig.mockMode
-    });
+    })
+    .eq('id', 1);
 
   if (configError) {
     throw new Error(`Error al guardar configuración en Supabase: ${configError.message}`);
