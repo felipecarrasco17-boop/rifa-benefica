@@ -38,6 +38,7 @@ export default function AdminDashboard() {
   // Modals / Details State
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
   const [showBulkModal, setShowBulkModal] = useState<boolean>(false);
+  const [bulkType, setBulkType] = useState<'responsible' | 'buyer'>('responsible');
 
   // Manual Assignment Form State
   const [buyerName, setBuyerName] = useState<string>('');
@@ -97,7 +98,7 @@ export default function AdminDashboard() {
     }
   };
 
-  // Assign entire list to a buyer (API call)
+  // Assign entire list to a responsible or buyer (API call)
   const handleAssignBulkList = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!buyerName || !buyerPhone) {
@@ -105,17 +106,30 @@ export default function AdminDashboard() {
       return;
     }
     setSubmitting(true);
+
+    const finalBuyerName = bulkType === 'responsible' 
+      ? `Responsable: ${buyerName.trim()}` 
+      : buyerName.trim();
+    
+    const finalStatus = bulkType === 'responsible' 
+      ? 'reserved' 
+      : ticketStatus;
+      
+    const finalPaymentMethod = bulkType === 'responsible' 
+      ? 'manual' 
+      : paymentMethod;
+
     try {
       const res = await fetch('/api/tickets/bulk', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           listIndex: selectedList,
-          buyerName,
+          buyerName: finalBuyerName,
           buyerPhone,
-          buyerEmail,
-          paymentMethod,
-          status: ticketStatus,
+          buyerEmail: bulkType === 'responsible' ? '' : buyerEmail,
+          paymentMethod: finalPaymentMethod,
+          status: finalStatus,
         }),
       });
       const data = await res.json();
@@ -128,6 +142,32 @@ export default function AdminDashboard() {
       setBuyerName('');
       setBuyerPhone('');
       setBuyerEmail('');
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Release entire list (API call)
+  const handleReleaseWholeList = async () => {
+    if (!confirm(`¿Estás seguro de que deseas liberar TODOS los números de la lista ${getExcelLabel(selectedList)}?`)) {
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const res = await fetch('/api/tickets/bulk', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          listIndex: selectedList
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Error al liberar lista');
+      
+      await fetchData();
+      alert(`Lista ${getExcelLabel(selectedList)} liberada con éxito.`);
     } catch (err: any) {
       alert(err.message);
     } finally {
@@ -239,6 +279,36 @@ export default function AdminDashboard() {
   // Filter list of tickets for current list
   const currentListTickets = tickets.filter((t) => t.listIndex === selectedList);
   const isListEmpty = currentListTickets.every((t) => t.status === 'available');
+
+  // Detectar si la lista está asignada masivamente a un responsable (vendedor) o a un comprador único
+  const firstTicketInList = currentListTickets[0];
+  
+  // Es responsable si todos (o al menos uno si hay una asignación bulk inicial) están en estado reserved y su nombre empieza con "Responsable:"
+  // Para que sea robusto, verificamos si al menos el primer ticket es de tipo responsable.
+  const isListAssignedToResponsible = firstTicketInList && 
+    firstTicketInList.status === 'reserved' && 
+    (firstTicketInList.buyerName || '').startsWith('Responsable:');
+
+  const responsibleName = isListAssignedToResponsible 
+    ? firstTicketInList.buyerName?.replace('Responsable:', '').trim() 
+    : '';
+  const responsiblePhone = isListAssignedToResponsible 
+    ? firstTicketInList.buyerPhone 
+    : '';
+
+  // Es comprador único si toda la lista tiene el mismo nombre de comprador no nulo y no empieza con "Responsable:"
+  const isListAssignedToSingleBuyer = !isListAssignedToResponsible && 
+    currentListTickets.length > 0 && 
+    currentListTickets.every(
+      (t) => t.status !== 'available' && 
+      t.buyerName && 
+      t.buyerName === firstTicketInList.buyerName && 
+      t.buyerPhone === firstTicketInList.buyerPhone
+    );
+
+  const singleBuyerName = isListAssignedToSingleBuyer ? firstTicketInList.buyerName : '';
+  const singleBuyerPhone = isListAssignedToSingleBuyer ? firstTicketInList.buyerPhone : '';
+  const singleBuyerStatus = isListAssignedToSingleBuyer ? firstTicketInList.status : '';
 
   // Search Results
   const queryListIndex = excelLabelToIndex(searchQuery);
@@ -410,6 +480,86 @@ export default function AdminDashboard() {
               </button>
             </div>
           </div>
+
+          {/* Banner de Asignación Completa (Responsable o Comprador Único) */}
+          {isListAssignedToResponsible && (
+            <div style={{
+              background: 'rgba(139, 92, 246, 0.08)',
+              border: '1px solid rgba(139, 92, 246, 0.3)',
+              color: '#c084fc',
+              padding: '12px 16px',
+              borderRadius: '12px',
+              marginBottom: '20px',
+              fontSize: '0.9rem',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: '12px'
+            }}>
+              <div style={{ flex: '1' }}>
+                👤 <strong>Lista asignada a un Responsable / Vendedor:</strong>
+                <span style={{ color: '#fff', marginLeft: '6px', fontWeight: 'bold' }}>{responsibleName}</span>
+                {responsiblePhone && <span style={{ color: 'var(--text-secondary)', marginLeft: '8px' }}>({responsiblePhone})</span>}
+                <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                  Todos los números de la lista están reservados para él. Puedes registrar compras individuales haciendo clic en cada número.
+                </p>
+              </div>
+              <button
+                onClick={handleReleaseWholeList}
+                className="btn-glass"
+                style={{ borderColor: 'var(--danger)', color: 'var(--danger)', padding: '6px 12px', fontSize: '0.8rem', whiteSpace: 'nowrap' }}
+                disabled={submitting}
+              >
+                🗑️ Liberar Lista
+              </button>
+            </div>
+          )}
+
+          {isListAssignedToSingleBuyer && (
+            <div style={{
+              background: singleBuyerStatus === 'paid' ? 'rgba(16, 185, 129, 0.08)' : 'rgba(245, 158, 11, 0.08)',
+              border: singleBuyerStatus === 'paid' ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid rgba(245, 158, 11, 0.3)',
+              color: singleBuyerStatus === 'paid' ? '#34d399' : '#fbbf24',
+              padding: '12px 16px',
+              borderRadius: '12px',
+              marginBottom: '20px',
+              fontSize: '0.9rem',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: '12px'
+            }}>
+              <div style={{ flex: '1' }}>
+                🎯 <strong>Lista comprada por un único dueño:</strong>
+                <span style={{ color: '#fff', marginLeft: '6px', fontWeight: 'bold' }}>{singleBuyerName}</span>
+                {singleBuyerPhone && <span style={{ color: 'var(--text-secondary)', marginLeft: '8px' }}>({singleBuyerPhone})</span>}
+                <span style={{
+                  marginLeft: '10px',
+                  fontSize: '0.7rem',
+                  padding: '2px 8px',
+                  borderRadius: '4px',
+                  background: singleBuyerStatus === 'paid' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(245, 158, 11, 0.2)',
+                  color: singleBuyerStatus === 'paid' ? '#34d399' : '#fbbf24',
+                  fontWeight: 'bold'
+                }}>
+                  {singleBuyerStatus === 'paid' ? 'PAGADO' : 'RESERVADO'}
+                </span>
+                <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                  Todos los números de la lista pertenecen a este comprador.
+                </p>
+              </div>
+              <button
+                onClick={handleReleaseWholeList}
+                className="btn-glass"
+                style={{ borderColor: 'var(--danger)', color: 'var(--danger)', padding: '6px 12px', fontSize: '0.8rem', whiteSpace: 'nowrap' }}
+                disabled={submitting}
+              >
+                🗑️ Liberar Lista
+              </button>
+            </div>
+          )}
 
           {/* List Status Numbers Grid */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '12px', marginBottom: '24px' }}>
@@ -750,72 +900,159 @@ export default function AdminDashboard() {
             </button>
 
             <h3 style={{ fontSize: '1.4rem', marginBottom: '8px' }}>Asignar Lista {getExcelLabel(selectedList)} Completa</h3>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '24px' }}>
-              Se registrarán todos los {config.ticketsPerList} números de esta lista (del 1 al {config.ticketsPerList}) a nombre de una sola persona.
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '20px' }}>
+              Registra todos los {config.ticketsPerList} números de esta lista (del 1 al {config.ticketsPerList}) de forma masiva.
             </p>
 
+            {/* Selector de Tipo de Asignación */}
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '24px', background: 'rgba(255,255,255,0.03)', padding: '4px', borderRadius: '8px', border: '1px solid var(--border-glass)' }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setBulkType('responsible');
+                  setPaymentMethod('manual');
+                  setTicketStatus('reserved');
+                }}
+                style={{
+                  flex: 1,
+                  padding: '8px 12px',
+                  background: bulkType === 'responsible' ? 'var(--primary)' : 'none',
+                  border: 'none',
+                  borderRadius: '6px',
+                  color: '#fff',
+                  cursor: 'pointer',
+                  fontWeight: '600',
+                  fontSize: '0.8rem',
+                  transition: 'background 0.2s'
+                }}
+              >
+                🧑‍💼 Responsable / Vendedor
+              </button>
+              <button
+                type="button"
+                onClick={() => setBulkType('buyer')}
+                style={{
+                  flex: 1,
+                  padding: '8px 12px',
+                  background: bulkType === 'buyer' ? 'var(--primary)' : 'none',
+                  border: 'none',
+                  borderRadius: '6px',
+                  color: '#fff',
+                  cursor: 'pointer',
+                  fontWeight: '600',
+                  fontSize: '0.8rem',
+                  transition: 'background 0.2s'
+                }}
+              >
+                🛒 Comprador Único
+              </button>
+            </div>
+
             <form onSubmit={handleAssignBulkList} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px', fontWeight: '600' }}>Nombre Completo</label>
-                <input 
-                  type="text" 
-                  required 
-                  value={buyerName} 
-                  onChange={(e) => setBuyerName(e.target.value)}
-                  placeholder="Ej. Juan Pérez"
-                  className="input-glass"
-                />
-              </div>
+              
+              {bulkType === 'responsible' ? (
+                // FORMULARIO DE RESPONSABLE
+                <>
+                  <div style={{ borderLeft: '3px solid var(--primary)', paddingLeft: '12px', marginBottom: '4px' }}>
+                    <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                      Asigna la lista a un colaborador para que la venda con sus conocidos. Los números quedarán **Reservados** y podrás editar cada comprador manualmente más tarde.
+                    </p>
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px', fontWeight: '600' }}>Nombre del Responsable / Vendedor</label>
+                    <input 
+                      type="text" 
+                      required 
+                      value={buyerName} 
+                      onChange={(e) => setBuyerName(e.target.value)}
+                      placeholder="Ej. Juan Pérez"
+                      className="input-glass"
+                    />
+                  </div>
 
-              <div>
-                <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px', fontWeight: '600' }}>Número de Teléfono</label>
-                <input 
-                  type="tel" 
-                  required 
-                  value={buyerPhone} 
-                  onChange={(e) => setBuyerPhone(e.target.value)}
-                  placeholder="Ej. +56912345678"
-                  className="input-glass"
-                />
-              </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px', fontWeight: '600' }}>Teléfono del Responsable</label>
+                    <input 
+                      type="tel" 
+                      required 
+                      value={buyerPhone} 
+                      onChange={(e) => setBuyerPhone(e.target.value)}
+                      placeholder="Ej. +56912345678"
+                      className="input-glass"
+                    />
+                  </div>
+                </>
+              ) : (
+                // FORMULARIO DE COMPRADOR ÚNICO
+                <>
+                  <div style={{ borderLeft: '3px solid var(--secondary)', paddingLeft: '12px', marginBottom: '4px' }}>
+                    <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                      Vende o reserva la lista completa a un único cliente dueño de todos los números.
+                    </p>
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px', fontWeight: '600' }}>Nombre del Comprador</label>
+                    <input 
+                      type="text" 
+                      required 
+                      value={buyerName} 
+                      onChange={(e) => setBuyerName(e.target.value)}
+                      placeholder="Ej. María Gómez"
+                      className="input-glass"
+                    />
+                  </div>
 
-              <div>
-                <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px', fontWeight: '600' }}>Correo Electrónico (Opcional)</label>
-                <input 
-                  type="email" 
-                  value={buyerEmail} 
-                  onChange={(e) => setBuyerEmail(e.target.value)}
-                  placeholder="ejemplo@correo.com"
-                  className="input-glass"
-                />
-              </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px', fontWeight: '600' }}>Número de Teléfono</label>
+                    <input 
+                      type="tel" 
+                      required 
+                      value={buyerPhone} 
+                      onChange={(e) => setBuyerPhone(e.target.value)}
+                      placeholder="Ej. +56998765432"
+                      className="input-glass"
+                    />
+                  </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>Medio de Pago</label>
-                  <select 
-                    value={paymentMethod} 
-                    onChange={(e) => setPaymentMethod(e.target.value as any)}
-                    className="input-glass"
-                  >
-                    <option value="manual">Efectivo / Manual</option>
-                    <option value="transfer">Transferencia</option>
-                    <option value="flow">Flow.cl</option>
-                  </select>
-                </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px', fontWeight: '600' }}>Correo Electrónico (Opcional)</label>
+                    <input 
+                      type="email" 
+                      value={buyerEmail} 
+                      onChange={(e) => setBuyerEmail(e.target.value)}
+                      placeholder="ejemplo@correo.com"
+                      className="input-glass"
+                    />
+                  </div>
 
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>Estado</label>
-                  <select 
-                    value={ticketStatus} 
-                    onChange={(e) => setTicketStatus(e.target.value as any)}
-                    className="input-glass"
-                  >
-                    <option value="paid">Pagado</option>
-                    <option value="reserved">Reservado</option>
-                  </select>
-                </div>
-              </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>Medio de Pago</label>
+                      <select 
+                        value={paymentMethod} 
+                        onChange={(e) => setPaymentMethod(e.target.value as any)}
+                        className="input-glass"
+                      >
+                        <option value="manual">Efectivo / Manual</option>
+                        <option value="transfer">Transferencia</option>
+                        <option value="flow">Flow.cl</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>Estado</label>
+                      <select 
+                        value={ticketStatus} 
+                        onChange={(e) => setTicketStatus(e.target.value as any)}
+                        className="input-glass"
+                      >
+                        <option value="paid">Pagado</option>
+                        <option value="reserved">Reservado</option>
+                      </select>
+                    </div>
+                  </div>
+                </>
+              )}
 
               <button type="submit" className="btn-glow" disabled={submitting} style={{ marginTop: '12px', width: '100%' }}>
                 {submitting ? 'Asignando lista...' : 'Confirmar Asignación Completa'}

@@ -71,3 +71,47 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error.message }, { status: 400 });
   }
 }
+
+export async function PUT(request: Request) {
+  try {
+    const db = await getDb();
+    const body = await request.json();
+    const { listIndex } = body;
+
+    const listIdx = parseInt(listIndex, 10);
+    if (isNaN(listIdx) || listIdx < 1 || listIdx > db.config.totalLists) {
+      return NextResponse.json({ error: 'Índice de lista inválido.' }, { status: 400 });
+    }
+
+    const ticketsPerList = db.config.ticketsPerList;
+    const targetTicketIds: string[] = [];
+    for (let n = 1; n <= ticketsPerList; n++) {
+      targetTicketIds.push(`${listIdx}-${n}`);
+    }
+
+    await updateDb((database) => {
+      for (const id of targetTicketIds) {
+        database.tickets[id] = {
+          id,
+          listIndex: listIdx,
+          numberIndex: database.tickets[id]?.numberIndex || parseInt(id.split('-')[1], 10),
+          status: 'available',
+          buyerName: null,
+          buyerPhone: null,
+          buyerEmail: null,
+          reservedAt: null,
+          paymentId: null,
+          paymentMethod: null,
+        };
+      }
+      return database;
+    });
+
+    return NextResponse.json({
+      success: true,
+      message: `Lista ${listIdx} liberada con éxito.`,
+    });
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message }, { status: 400 });
+  }
+}
