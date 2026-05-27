@@ -252,16 +252,34 @@ export async function getDb(): Promise<DatabaseSchema> {
     imageUrl: p.image_url
   }));
 
-  const { data: ticketsRows, error: ticketsError } = await supabase
-    .from('raffle_tickets')
-    .select('*');
+  let ticketsRows: any[] = [];
+  let from = 0;
+  const pageSize = 1000;
+  let hasMore = true;
 
-  if (ticketsError) {
-    throw new Error(`Error al cargar tickets desde Supabase: ${ticketsError.message}`);
+  while (hasMore) {
+    const { data: chunk, error: ticketsError } = await supabase
+      .from('raffle_tickets')
+      .select('*')
+      .range(from, from + pageSize - 1);
+
+    if (ticketsError) {
+      throw new Error(`Error al cargar tickets desde Supabase: ${ticketsError.message}`);
+    }
+
+    if (chunk && chunk.length > 0) {
+      ticketsRows = ticketsRows.concat(chunk);
+      from += pageSize;
+      if (chunk.length < pageSize) {
+        hasMore = false;
+      }
+    } else {
+      hasMore = false;
+    }
   }
 
   const tickets: Record<string, Ticket> = {};
-  for (const t of ticketsRows || []) {
+  for (const t of ticketsRows) {
     tickets[t.id] = {
       id: t.id,
       listIndex: t.list_index,

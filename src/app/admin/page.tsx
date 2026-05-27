@@ -219,6 +219,23 @@ export default function AdminDashboard() {
   const totalProjected = (paidTickets + reservedTickets) * config.ticketPrice;
   const salesProgressPercent = totalTickets > 0 ? ((paidTickets + reservedTickets) / totalTickets) * 100 : 0;
 
+  // Calcular listas completas vendidas (los 15 tickets pagados)
+  let fullListsSold = 0;
+  const ticketsByList: Record<number, number> = {};
+  for (let i = 1; i <= config.totalLists; i++) {
+    ticketsByList[i] = 0;
+  }
+  tickets.forEach((t) => {
+    if (t.status === 'paid') {
+      ticketsByList[t.listIndex] = (ticketsByList[t.listIndex] || 0) + 1;
+    }
+  });
+  for (let i = 1; i <= config.totalLists; i++) {
+    if (ticketsByList[i] === config.ticketsPerList) {
+      fullListsSold++;
+    }
+  }
+
   // Filter list of tickets for current list
   const currentListTickets = tickets.filter((t) => t.listIndex === selectedList);
   const isListEmpty = currentListTickets.every((t) => t.status === 'available');
@@ -298,24 +315,24 @@ export default function AdminDashboard() {
       </div>
 
       {/* KPI Section */}
-      <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '20px', marginBottom: '32px' }}>
+      <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px', marginBottom: '32px' }}>
         
         <div className="glass-panel" style={{ padding: '20px', borderBottom: '4px solid var(--success)' }}>
           <span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', fontWeight: 'bold', textTransform: 'uppercase' }}>Total Recaudado (Pagado)</span>
           <h2 style={{ fontSize: '1.8rem', color: 'var(--success)', marginTop: '8px' }}>{priceFormatter.format(totalRaised)}</h2>
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '4px' }}>{paidTickets} números pagados</p>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '4px' }}>{paidTickets} números pagados efectivamente</p>
         </div>
 
         <div className="glass-panel" style={{ padding: '20px', borderBottom: '4px solid var(--warning)' }}>
           <span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', fontWeight: 'bold', textTransform: 'uppercase' }}>Pendiente (Reservado)</span>
           <h2 style={{ fontSize: '1.8rem', color: 'var(--warning)', marginTop: '8px' }}>{priceFormatter.format(totalReservedPending)}</h2>
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '4px' }}>{reservedTickets} números reservados</p>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '4px' }}>{reservedTickets} números reservados por verificar</p>
         </div>
 
         <div className="glass-panel" style={{ padding: '20px', borderBottom: '4px solid var(--primary)' }}>
           <span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', fontWeight: 'bold', textTransform: 'uppercase' }}>Ingreso Proyectado</span>
           <h2 style={{ fontSize: '1.8rem', color: 'var(--primary)', marginTop: '8px' }}>{priceFormatter.format(totalProjected)}</h2>
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '4px' }}>{paidTickets + reservedTickets} de {totalTickets} vendidos</p>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '4px' }}>Total si se completan todas las reservas</p>
         </div>
 
         <div className="glass-panel" style={{ padding: '20px', borderBottom: '4px solid #8b5cf6' }}>
@@ -325,6 +342,24 @@ export default function AdminDashboard() {
           <div style={{ width: '100%', height: '8px', background: 'rgba(255,255,255,0.08)', borderRadius: '4px', marginTop: '8px', overflow: 'hidden' }}>
             <div style={{ width: `${salesProgressPercent}%`, height: '100%', background: 'linear-gradient(90deg, var(--secondary) 0%, var(--primary) 100%)', borderRadius: '4px' }} />
           </div>
+        </div>
+
+        <div className="glass-panel" style={{ padding: '20px', borderBottom: '4px solid #06b6d4' }}>
+          <span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', fontWeight: 'bold', textTransform: 'uppercase' }}>Estado de Números</span>
+          <h2 style={{ fontSize: '1.8rem', color: '#22d3ee', marginTop: '8px' }}>{paidTickets + reservedTickets} <span style={{ fontSize: '1rem', color: 'var(--text-secondary)' }}>/ {totalTickets}</span></h2>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '4px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            <span style={{ color: 'var(--success)' }}>🟢 {paidTickets} Pagados</span>
+            <span style={{ color: 'var(--warning)' }}>🟡 {reservedTickets} Reservados</span>
+            <span style={{ color: '#fff' }}>⚪ {availableTickets} Disp.</span>
+          </p>
+        </div>
+
+        <div className="glass-panel" style={{ padding: '20px', borderBottom: '4px solid #f97316' }}>
+          <span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', fontWeight: 'bold', textTransform: 'uppercase' }}>Listas Completas Vendidas</span>
+          <h2 style={{ fontSize: '1.8rem', color: '#fb923c', marginTop: '8px' }}>{fullListsSold} <span style={{ fontSize: '1rem', color: 'var(--text-secondary)' }}>/ {config.totalLists}</span></h2>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '4px' }}>
+            Listas (A-GR) con sus {config.ticketsPerList} números pagados
+          </p>
         </div>
 
       </section>
