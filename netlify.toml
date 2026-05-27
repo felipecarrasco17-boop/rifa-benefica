@@ -1,0 +1,8 @@
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+# Netlify Essential Next.js plugin is automatically applied by Netlify, 
+# but declaring it here ensures compatibility.
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
