@@ -67,7 +67,14 @@ if (!supabaseUrl.startsWith('http://') && !supabaseUrl.startsWith('https://')) {
   }
 }
 
-export const supabase = createClient(supabaseUrl, supabaseKey);
+export const supabase = createClient(supabaseUrl, supabaseKey, {
+  auth: {
+    persistSession: false
+  },
+  global: {
+    fetch: (url, options) => fetch(url, { ...options, cache: 'no-store' as any })
+  }
+});
 
 // 2. Default Initial State for Autopopulation
 const getDefaultConfig = () => ({
