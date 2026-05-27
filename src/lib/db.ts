@@ -338,17 +338,20 @@ export async function saveDb(data: DatabaseSchema): Promise<void> {
   }
 }
 
-// 5. Atomic Update helper with Diff calculations to minimize PostgreSQL network load
 export async function updateDb(
   updater: (db: DatabaseSchema) => DatabaseSchema | Promise<DatabaseSchema>
 ): Promise<DatabaseSchema> {
   const oldDb = await getDb();
+  
+  // Clonar el estado original para poder calcular las diferencias reales en memoria
+  const oldDbClone = JSON.parse(JSON.stringify(oldDb)) as DatabaseSchema;
+  
   const newDb = await updater(oldDb);
 
   // A. Sift through tickets map to find what changed
   const changedTickets = [];
   for (const [id, ticket] of Object.entries(newDb.tickets)) {
-    const oldTicket = oldDb.tickets[id];
+    const oldTicket = oldDbClone.tickets[id];
     
     // Check if ticket is new or modified
     if (!oldTicket || 
@@ -387,16 +390,16 @@ export async function updateDb(
 
   // C. Sift configuration updates
   if (
-    oldDb.config.title !== newDb.config.title ||
-    oldDb.config.description !== newDb.config.description ||
-    oldDb.config.ticketPrice !== newDb.config.ticketPrice ||
-    oldDb.config.drawDate !== newDb.config.drawDate ||
-    oldDb.config.totalLists !== newDb.config.totalLists ||
-    oldDb.config.ticketsPerList !== newDb.config.ticketsPerList ||
-    oldDb.config.adminEmail !== newDb.config.adminEmail ||
-    oldDb.config.adminPassword !== newDb.config.adminPassword ||
-    JSON.stringify(oldDb.config.bankTransferData) !== JSON.stringify(newDb.config.bankTransferData) ||
-    JSON.stringify(oldDb.config.flowConfig) !== JSON.stringify(newDb.config.flowConfig)
+    oldDbClone.config.title !== newDb.config.title ||
+    oldDbClone.config.description !== newDb.config.description ||
+    oldDbClone.config.ticketPrice !== newDb.config.ticketPrice ||
+    oldDbClone.config.drawDate !== newDb.config.drawDate ||
+    oldDbClone.config.totalLists !== newDb.config.totalLists ||
+    oldDbClone.config.ticketsPerList !== newDb.config.ticketsPerList ||
+    oldDbClone.config.adminEmail !== newDb.config.adminEmail ||
+    oldDbClone.config.adminPassword !== newDb.config.adminPassword ||
+    JSON.stringify(oldDbClone.config.bankTransferData) !== JSON.stringify(newDb.config.bankTransferData) ||
+    JSON.stringify(oldDbClone.config.flowConfig) !== JSON.stringify(newDb.config.flowConfig)
   ) {
     await saveDb(newDb);
   }
