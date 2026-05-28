@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { getExcelLabel, excelLabelToIndex } from '@/lib/utils';
+import { getExcelLabel, excelLabelToIndex, calculateTotalPrice } from '@/lib/utils';
 
 interface RaffleConfig {
   title: string;
@@ -19,6 +19,11 @@ interface RaffleConfig {
     rut: string;
     email: string;
   };
+  discountEnabled?: boolean;
+  discountCombo1Tickets?: number;
+  discountCombo1Price?: number;
+  discountCombo2Tickets?: number;
+  discountCombo2Price?: number;
 }
 
 interface Prize {
@@ -71,6 +76,10 @@ export default function PublicHome() {
   const [searching, setSearching] = useState<boolean>(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState<boolean>(false);
+
+  // Receipt Retrieval Modal State
+  const [showReceiptModal, setShowReceiptModal] = useState<boolean>(false);
+  const [receiptTickets, setReceiptTickets] = useState<any[]>([]);
 
   const handlePublicSearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -315,10 +324,24 @@ export default function PublicHome() {
           </div>
         )}
 
-        <div style={{ display: 'flex', gap: '16px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', alignItems: 'center' }}>
           <span className="badge badge-info" style={{ padding: '8px 16px', fontSize: '0.9rem' }}>
             Valor por Número: {priceFormatter.format(config.ticketPrice)}
           </span>
+          {config.discountEnabled && (
+            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', justifyContent: 'center', marginTop: '4px' }}>
+              {config.discountCombo1Tickets && config.discountCombo1Price && (
+                <span className="badge badge-success" style={{ padding: '6px 12px', fontSize: '0.8rem', background: 'rgba(16, 185, 129, 0.15)', color: '#34d399', border: '1px solid rgba(16, 185, 129, 0.3)', borderRadius: '20px', fontWeight: '600' }}>
+                  🔥 Pack {config.discountCombo1Tickets}: {priceFormatter.format(config.discountCombo1Price)}
+                </span>
+              )}
+              {config.discountCombo2Tickets && config.discountCombo2Price && (
+                <span className="badge badge-success" style={{ padding: '6px 12px', fontSize: '0.8rem', background: 'rgba(16, 185, 129, 0.15)', color: '#34d399', border: '1px solid rgba(16, 185, 129, 0.3)', borderRadius: '20px', fontWeight: '600' }}>
+                  🔥 Pack {config.discountCombo2Tickets}: {priceFormatter.format(config.discountCombo2Price)}
+                </span>
+              )}
+            </div>
+          )}
         </div>
       </header>
 
@@ -507,7 +530,20 @@ export default function PublicHome() {
           <div style={{ maxWidth: '600px', margin: '20px auto 0' }}>
             {searchResults.length > 0 ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <h4 style={{ fontSize: '1rem', color: 'var(--primary)', marginBottom: '8px' }}>Números encontrados ({searchResults.length}):</h4>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', flexWrap: 'wrap', gap: '8px' }}>
+                  <h4 style={{ fontSize: '1rem', color: 'var(--primary)', margin: 0 }}>Números encontrados ({searchResults.length}):</h4>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReceiptTickets(searchResults);
+                      setShowReceiptModal(true);
+                    }}
+                    className="btn-glow"
+                    style={{ padding: '6px 12px', fontSize: '0.8rem', background: 'linear-gradient(135deg, #00f2fe 0%, #a855f7 100%)', margin: 0 }}
+                  >
+                    🎫 Ver Comprobante / Boleto Digital
+                  </button>
+                </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '12px' }}>
                   {searchResults.map((t) => (
                     <div key={t.id} style={{ background: 'rgba(255, 255, 255, 0.02)', border: '1px solid var(--border-glass)', borderRadius: '12px', padding: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -574,7 +610,7 @@ export default function PublicHome() {
             onClick={() => setShowCheckoutModal(true)}
             style={{ padding: '10px 20px', fontSize: '0.9rem' }}
           >
-            Pagar {priceFormatter.format(selectedNumbers.length * config.ticketPrice)}
+            Pagar {priceFormatter.format(calculateTotalPrice(selectedNumbers.length, config))}
           </button>
         </div>
       )}
@@ -621,7 +657,7 @@ export default function PublicHome() {
               <>
                 <h3 style={{ fontSize: '1.4rem', marginBottom: '8px' }}>Finalizar Compra</h3>
                 <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '24px' }}>
-                  Has seleccionado {selectedNumbers.length} números por un valor total de <strong>{priceFormatter.format(selectedNumbers.length * config.ticketPrice)}</strong>.
+                  Has seleccionado {selectedNumbers.length} números por un valor total de <strong>{priceFormatter.format(calculateTotalPrice(selectedNumbers.length, config))}</strong>.
                 </p>
 
                 {error && (
@@ -850,7 +886,7 @@ export default function PublicHome() {
                     <strong>{checkoutResult.transferDetails?.email}</strong>
                     
                     <span style={{ color: 'var(--text-secondary)' }}>Monto:</span>
-                    <strong style={{ color: 'var(--primary)' }}>{priceFormatter.format((checkoutResult.ticketIds?.length || 0) * config.ticketPrice)}</strong>
+                    <strong style={{ color: 'var(--primary)' }}>{priceFormatter.format(calculateTotalPrice(checkoutResult.ticketIds?.length || 0, config))}</strong>
                   </div>
                 </div>
 
@@ -870,6 +906,203 @@ export default function PublicHome() {
                 </button>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Receipt Retrieval Modal */}
+      {showReceiptModal && receiptTickets.length > 0 && (
+        <div style={{
+          position: 'fixed',
+          top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(3, 7, 18, 0.85)',
+          backdropFilter: 'blur(12px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '20px',
+          zIndex: 100
+        }}>
+          <div className="glass-panel" style={{
+            background: 'rgba(17, 24, 39, 0.8)',
+            border: '1px solid var(--border-glass)',
+            boxShadow: '0 0 40px rgba(0,0,0,0.5)',
+            width: '100%',
+            maxWidth: '550px',
+            padding: '32px',
+            borderRadius: '20px',
+            maxHeight: '90vh',
+            overflowY: 'auto',
+            position: 'relative'
+          }}>
+            <button 
+              onClick={() => {
+                setShowReceiptModal(false);
+                setReceiptTickets([]);
+              }}
+              style={{ position: 'absolute', top: '16px', right: '16px', background: 'none', border: 'none', color: '#9ca3af', fontSize: '1.2rem', cursor: 'pointer' }}
+              className="no-print"
+            >
+              ✕
+            </button>
+
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: '2.5rem', marginBottom: '12px' }} className="no-print">🎫</div>
+              <h3 style={{ fontSize: '1.3rem', marginBottom: '8px', color: 'var(--primary)' }} className="no-print">Comprobante de Respaldo</h3>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '20px' }} className="no-print">
+                Aquí tienes el respaldo oficial de tus números adquiridos en nuestra rifa.
+              </p>
+
+              {/* Premium Digital Ticket */}
+              <div className="print-area" style={{
+                background: 'linear-gradient(135deg, rgba(30, 41, 59, 0.7) 0%, rgba(15, 23, 42, 0.9) 100%)',
+                border: '2px solid rgba(0, 242, 254, 0.25)',
+                boxShadow: '0 0 30px rgba(0, 242, 254, 0.15)',
+                borderRadius: '16px',
+                padding: '24px',
+                position: 'relative',
+                marginBottom: '20px',
+                textAlign: 'left',
+                overflow: 'hidden'
+              }}>
+                {/* Notches on sides */}
+                <div style={{ position: 'absolute', top: '50%', left: '-12px', width: '24px', height: '24px', borderRadius: '50%', background: 'rgba(15, 23, 42, 1)', borderRight: '2px solid rgba(0, 242, 254, 0.25)', transform: 'translateY(-50%)' }} />
+                <div style={{ position: 'absolute', top: '50%', right: '-12px', width: '24px', height: '24px', borderRadius: '50%', background: 'rgba(15, 23, 42, 1)', borderLeft: '2px solid rgba(0, 242, 254, 0.25)', transform: 'translateY(-50%)' }} />
+                
+                {/* Header */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1px dashed rgba(255,255,255,0.15)', paddingBottom: '16px', marginBottom: '16px' }}>
+                  <div>
+                    <span style={{ fontSize: '0.7rem', color: 'var(--primary)', fontWeight: 'bold', letterSpacing: '0.1em', textTransform: 'uppercase' }}>BOLETO OFICIAL DE RIFA</span>
+                    <h4 style={{ fontSize: '1.1rem', color: '#fff', margin: '4px 0 0 0', fontWeight: 'bold' }}>{config.title}</h4>
+                  </div>
+                  <span style={{ 
+                    fontSize: '0.75rem', 
+                    fontWeight: 'bold', 
+                    padding: '4px 10px', 
+                    borderRadius: '6px', 
+                    background: receiptTickets.some(t => t.status === 'reserved') ? 'rgba(245, 158, 11, 0.15)' : 'rgba(16, 185, 129, 0.15)', 
+                    color: receiptTickets.some(t => t.status === 'reserved') ? '#fbbf24' : '#34d399',
+                    border: receiptTickets.some(t => t.status === 'reserved') ? '1px solid rgba(245, 158, 11, 0.3)' : '1px solid rgba(16, 185, 129, 0.3)',
+                    whiteSpace: 'nowrap'
+                  }}>
+                    {receiptTickets.some(t => t.status === 'reserved') ? '🟡 RESERVADO' : '🟢 PAGADO'}
+                  </span>
+                </div>
+
+                {/* Info grid */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Comprador:</span>
+                      <div style={{ fontSize: '0.95rem', color: '#fff', fontWeight: 'bold' }}>{receiptTickets[0]?.buyerName || 'Comprador Registrado'}</div>
+                    </div>
+                    <div>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Contacto:</span>
+                      <div style={{ fontSize: '0.85rem', color: '#fff' }}>{searchQuery}</div>
+                    </div>
+                    <div>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Fecha Sorteo:</span>
+                      <div style={{ fontSize: '0.85rem', color: '#fff' }}>{new Date(config.drawDate).toLocaleDateString('es-CL', { day: 'numeric', month: 'long', year: 'numeric' })}</div>
+                    </div>
+                  </div>
+                  
+                  {/* Decorative QR */}
+                  <div style={{ padding: '8px', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-glass)', borderRadius: '12px' }} className="no-print">
+                    <svg width="55" height="55" viewBox="0 0 29 29" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'var(--primary)' }}>
+                      <path d="M1 1h6v6H1V1zm0 21h6v6H1v-6zm21 0h6v6h-6v-6zM21 1h6v6h-6V1z" fill="currentColor" />
+                      <path d="M12 2h2v4h-2V2zm3 0h2v1h-2V2zm0 3h2v2h-2V5zm-3 8h2v2h-2v-2zm3 0h3v1h-3v-1zm5 0h2v4h-2v-4zm-5 3h2v2h-2v-2zm-3 3h2v2h-2v-2zm3 0h2v3h-2v-3zm3 0h2v1h-2v-1zm3 0h2v3h-2v-3zm-9 3h2v2H9v-2zm3 0h2v1h-2v-1zm5 0h2v2h-2v-2zm-9 3h3v1H8v-1zm5 0h2v2h-2v-2zm3 0h2v1h-2v-1z" fill="currentColor" />
+                    </svg>
+                  </div>
+                </div>
+
+                {/* Tickets section */}
+                <div style={{ marginTop: '20px', paddingTop: '16px', borderTop: '1px dashed rgba(255,255,255,0.15)' }}>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'block', marginBottom: '8px' }}>Números Adquiridos:</span>
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    {receiptTickets.map((t) => {
+                      return (
+                        <div key={t.id} style={{
+                          background: 'linear-gradient(135deg, rgba(0, 242, 254, 0.05) 0%, transparent 100%)',
+                          border: t.status === 'paid' ? '1px solid #10b981' : '1px solid #fbbf24',
+                          borderRadius: '8px',
+                          padding: '6px 12px',
+                          fontSize: '0.85rem',
+                          fontWeight: 'bold',
+                          color: '#fff',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '4px'
+                        }}>
+                          <span>Lista {getExcelLabel(t.listIndex)}</span>
+                          <span style={{ color: t.status === 'paid' ? '#10b981' : '#fbbf24' }}>•</span>
+                          <span>N° {t.numberIndex}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="btn-glow no-print"
+                style={{
+                  marginBottom: '16px',
+                  width: '100%',
+                  fontWeight: 'bold',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
+                  background: 'linear-gradient(135deg, #a855f7 0%, #3b82f6 100%)'
+                }}
+              >
+                🖨️ Imprimir o Guardar PDF
+              </button>
+
+              {/* If any ticket is reserved, show bank transfer instructions */}
+              {receiptTickets.some(t => t.status === 'reserved') && (
+                <div className="glass-panel no-print" style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', textAlign: 'left', borderRadius: '12px', marginBottom: '16px', fontSize: '0.9rem' }}>
+                  <h4 style={{ fontSize: '0.95rem', marginBottom: '8px', borderBottom: '1px solid var(--border-glass)', paddingBottom: '6px', color: '#fbbf24' }}>Datos para Transferencia Pendiente:</h4>
+                  <div style={{ display: 'grid', gridTemplateColumns: '90px 1fr', gap: '6px 12px' }}>
+                    <span style={{ color: 'var(--text-secondary)' }}>Banco:</span>
+                    <strong>{config.bankTransferData?.bankName}</strong>
+                    
+                    <span style={{ color: 'var(--text-secondary)' }}>Tipo:</span>
+                    <strong>{config.bankTransferData?.accountType}</strong>
+                    
+                    <span style={{ color: 'var(--text-secondary)' }}>Número:</span>
+                    <strong>{config.bankTransferData?.accountNumber}</strong>
+                    
+                    <span style={{ color: 'var(--text-secondary)' }}>RUT:</span>
+                    <strong>{config.bankTransferData?.rut}</strong>
+                    
+                    <span style={{ color: 'var(--text-secondary)' }}>Correo:</span>
+                    <strong>{config.bankTransferData?.email}</strong>
+                    
+                    <span style={{ color: 'var(--text-secondary)' }}>Total Pendiente:</span>
+                    <strong style={{ color: 'var(--primary)' }}>
+                      {priceFormatter.format(calculateTotalPrice(receiptTickets.filter(t => t.status === 'reserved').length, config))}
+                    </strong>
+                  </div>
+                  <div style={{ marginTop: '10px', fontSize: '0.75rem', color: '#fbbf24', lineHeight: '1.4' }}>
+                    ⚠️ Envía el comprobante a <strong>{config.bankTransferData?.email}</strong> para validar tu pago y pasar tus números a estado "PAGADO".
+                  </div>
+                </div>
+              )}
+
+              <button 
+                onClick={() => {
+                  setShowReceiptModal(false);
+                  setReceiptTickets([]);
+                }}
+                className="btn-glass no-print"
+                style={{ width: '100%' }}
+              >
+                Cerrar
+              </button>
+            </div>
           </div>
         </div>
       )}

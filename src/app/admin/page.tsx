@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
-import { getExcelLabel, excelLabelToIndex } from '@/lib/utils';
+import { getExcelLabel, excelLabelToIndex, calculateTotalPrice } from '@/lib/utils';
 
 const priceFormatter = new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP' });
 
@@ -21,6 +21,11 @@ interface RaffleConfig {
   };
   reservationExpiryDays?: number;
   whatsappTemplate?: string;
+  discountEnabled?: boolean;
+  discountCombo1Tickets?: number;
+  discountCombo1Price?: number;
+  discountCombo2Tickets?: number;
+  discountCombo2Price?: number;
 }
 
 interface Ticket {
@@ -85,12 +90,60 @@ export default function AdminDashboard() {
       ? ticket.buyerName.replace('Responsable:', '').trim() 
       : cleanBuyerName(ticket.buyerName);
       
+    // Detect other tickets reserved for the same buyer (same clean phone number)
+    const cleanPhone = (p: string | null) => p ? p.replace(/[^0-9]/g, '') : '';
+    const ticketPhone = cleanPhone(ticket.buyerPhone);
+    
+    let buyerTickets = [ticket];
+    if (ticketPhone) {
+      buyerTickets = tickets.filter(t => 
+        t.status === 'reserved' && 
+        cleanPhone(t.buyerPhone) === ticketPhone
+      );
+    }
+    
+    let numeroStr = String(ticket.numberIndex);
+    let listaStr = getExcelLabel(ticket.listIndex);
+    let idStr = ticket.id;
+    let totalPrice = calculateTotalPrice(buyerTickets.length, config);
+    
+    if (buyerTickets.length > 1) {
+      // Sort tickets to make listing look clean
+      const sortedTickets = [...buyerTickets].sort((a, b) => {
+        if (a.listIndex !== b.listIndex) return a.listIndex - b.listIndex;
+        return a.numberIndex - b.numberIndex;
+      });
+      
+      // Numbers: e.g. "4, 5 y 6"
+      const numberValues = sortedTickets.map(t => t.numberIndex);
+      if (numberValues.length === 2) {
+        numeroStr = `${numberValues[0]} y ${numberValues[1]}`;
+      } else {
+        const lastNum = numberValues.pop();
+        numeroStr = `${numberValues.join(', ')} y ${lastNum}`;
+      }
+      
+      // Lists: e.g. "B" or "B y C"
+      const listLabels = Array.from(new Set(sortedTickets.map(t => getExcelLabel(t.listIndex))));
+      if (listLabels.length === 1) {
+        listaStr = listLabels[0];
+      } else if (listLabels.length === 2) {
+        listaStr = `${listLabels[0]} y ${listLabels[1]}`;
+      } else {
+        const lastList = listLabels.pop();
+        listaStr = `${listLabels.join(', ')} y ${lastList}`;
+      }
+      
+      // IDs
+      idStr = sortedTickets.map(t => t.id).join(', ');
+    }
+      
     return template
       .replace(/{nombre}/g, buyerNameClean || '')
-      .replace(/{numero}/g, String(ticket.numberIndex))
-      .replace(/{lista}/g, getExcelLabel(ticket.listIndex))
-      .replace(/{id}/g, ticket.id)
-      .replace(/{precio}/g, priceFormatter.format(config?.ticketPrice || 0))
+      .replace(/{numero}/g, numeroStr)
+      .replace(/{lista}/g, listaStr)
+      .replace(/{id}/g, idStr)
+      .replace(/{precio}/g, priceFormatter.format(totalPrice))
       .replace(/{banco}/g, config?.bankTransferData?.bankName || '')
       .replace(/{cuenta}/g, config?.bankTransferData?.accountType || '')
       .replace(/{ncuenta}/g, config?.bankTransferData?.accountNumber || '')

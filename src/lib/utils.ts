@@ -30,3 +30,38 @@ export function excelLabelToIndex(label: string): number {
   }
   return index;
 }
+
+/**
+ * Calculates the optimal total price for a given number of tickets based on active discount combos.
+ */
+export function calculateTotalPrice(n: number, config: any): number {
+  const regularPrice = config.ticketPrice;
+  if (!config.discountEnabled) {
+    return n * regularPrice;
+  }
+  
+  const c1Tickets = config.discountCombo1Tickets || 0;
+  const c1Price = config.discountCombo1Price || 0;
+  const c2Tickets = config.discountCombo2Tickets || 0;
+  const c2Price = config.discountCombo2Price || 0;
+  
+  // Sort combos by ticket count descending
+  const combos = [];
+  if (c1Tickets > 1 && c1Price > 0) combos.push({ tickets: c1Tickets, price: c1Price });
+  if (c2Tickets > 1 && c2Price > 0) combos.push({ tickets: c2Tickets, price: c2Price });
+  combos.sort((a, b) => b.tickets - a.tickets);
+  
+  let remaining = n;
+  let total = 0;
+  
+  for (const combo of combos) {
+    if (remaining >= combo.tickets) {
+      const count = Math.floor(remaining / combo.tickets);
+      total += count * combo.price;
+      remaining = remaining % combo.tickets;
+    }
+  }
+  
+  total += remaining * regularPrice;
+  return total;
+}

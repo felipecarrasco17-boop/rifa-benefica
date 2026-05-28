@@ -35,6 +35,11 @@ export interface RaffleConfig {
   };
   whatsappTemplate?: string;
   reservationExpiryDays?: number;
+  discountEnabled?: boolean;
+  discountCombo1Tickets?: number;
+  discountCombo1Price?: number;
+  discountCombo2Tickets?: number;
+  discountCombo2Price?: number;
 }
 
 export interface Prize {
@@ -250,7 +255,22 @@ export async function getDb(): Promise<DatabaseSchema> {
     whatsappTemplate: row.whatsapp_template || DEFAULT_WHATSAPP_TEMPLATE,
     reservationExpiryDays: row.reservation_expiry_days !== undefined && row.reservation_expiry_days !== null
       ? Number(row.reservation_expiry_days)
-      : 2 // default to 2 days
+      : 2, // default to 2 days
+    discountEnabled: row.discount_enabled !== undefined && row.discount_enabled !== null
+      ? Boolean(row.discount_enabled)
+      : false,
+    discountCombo1Tickets: row.discount_combo1_tickets !== undefined && row.discount_combo1_tickets !== null
+      ? Number(row.discount_combo1_tickets)
+      : 3,
+    discountCombo1Price: row.discount_combo1_price !== undefined && row.discount_combo1_price !== null
+      ? Number(row.discount_combo1_price)
+      : 5000,
+    discountCombo2Tickets: row.discount_combo2_tickets !== undefined && row.discount_combo2_tickets !== null
+      ? Number(row.discount_combo2_tickets)
+      : 7,
+    discountCombo2Price: row.discount_combo2_price !== undefined && row.discount_combo2_price !== null
+      ? Number(row.discount_combo2_price)
+      : 10000
   };
 
   const { data: prizesRows, error: prizesError } = await supabase
@@ -348,6 +368,21 @@ export async function saveDb(data: DatabaseSchema): Promise<void> {
   if (data.config.reservationExpiryDays !== undefined) {
     updateData.reservation_expiry_days = data.config.reservationExpiryDays;
   }
+  if (data.config.discountEnabled !== undefined) {
+    updateData.discount_enabled = data.config.discountEnabled;
+  }
+  if (data.config.discountCombo1Tickets !== undefined) {
+    updateData.discount_combo1_tickets = data.config.discountCombo1Tickets;
+  }
+  if (data.config.discountCombo1Price !== undefined) {
+    updateData.discount_combo1_price = data.config.discountCombo1Price;
+  }
+  if (data.config.discountCombo2Tickets !== undefined) {
+    updateData.discount_combo2_tickets = data.config.discountCombo2Tickets;
+  }
+  if (data.config.discountCombo2Price !== undefined) {
+    updateData.discount_combo2_price = data.config.discountCombo2Price;
+  }
 
   const { error: configError } = await supabase
     .from('raffle_config')
@@ -355,11 +390,20 @@ export async function saveDb(data: DatabaseSchema): Promise<void> {
     .eq('id', 1);
 
   if (configError) {
-    // Graceful fallback if column doesn't exist in Supabase
-    if (configError.code === '42703') {
-      console.warn('Advertencia: Columnas nuevas no existen en Supabase. Guardando sin whatsapp_template ni reservation_expiry_days.');
+    // Graceful fallback if new columns do not exist in Supabase (detecting 42703 or PostgREST schema cache error)
+    const isColumnError = configError.code === '42703' || 
+                          configError.message?.includes('column') || 
+                          configError.message?.includes('schema cache');
+
+    if (isColumnError) {
+      console.warn('Advertencia: Columnas nuevas no existen en Supabase. Guardando sin whatsapp_template, reservation_expiry_days ni combos.');
       delete updateData.whatsapp_template;
       delete updateData.reservation_expiry_days;
+      delete updateData.discount_enabled;
+      delete updateData.discount_combo1_tickets;
+      delete updateData.discount_combo1_price;
+      delete updateData.discount_combo2_tickets;
+      delete updateData.discount_combo2_price;
       const { error: retryError } = await supabase
         .from('raffle_config')
         .update(updateData)
@@ -461,6 +505,11 @@ export async function updateDb(
     oldDbClone.config.adminPassword !== newDb.config.adminPassword ||
     oldDbClone.config.whatsappTemplate !== newDb.config.whatsappTemplate ||
     oldDbClone.config.reservationExpiryDays !== newDb.config.reservationExpiryDays ||
+    oldDbClone.config.discountEnabled !== newDb.config.discountEnabled ||
+    oldDbClone.config.discountCombo1Tickets !== newDb.config.discountCombo1Tickets ||
+    oldDbClone.config.discountCombo1Price !== newDb.config.discountCombo1Price ||
+    oldDbClone.config.discountCombo2Tickets !== newDb.config.discountCombo2Tickets ||
+    oldDbClone.config.discountCombo2Price !== newDb.config.discountCombo2Price ||
     JSON.stringify(oldDbClone.config.bankTransferData) !== JSON.stringify(newDb.config.bankTransferData) ||
     JSON.stringify(oldDbClone.config.flowConfig) !== JSON.stringify(newDb.config.flowConfig)
   ) {

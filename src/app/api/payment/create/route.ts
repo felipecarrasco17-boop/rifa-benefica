@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getDb, updateDb, Ticket } from '@/lib/db';
 import { createFlowPayment } from '@/lib/flow';
+import { calculateTotalPrice } from '@/lib/utils';
 
 export async function POST(request: Request) {
   try {
@@ -21,8 +22,7 @@ export async function POST(request: Request) {
       ? buyerEmail.trim() 
       : db.config.adminEmail;
 
-    const ticketPrice = db.config.ticketPrice;
-    const totalAmount = ticketIds.length * ticketPrice;
+    const totalAmount = calculateTotalPrice(ticketIds.length, db.config);
     const commerceOrder = `order_${Date.now()}`;
 
     // Get host for absolute URLs

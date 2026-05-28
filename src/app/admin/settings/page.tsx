@@ -28,6 +28,11 @@ interface RaffleConfig {
   };
   whatsappTemplate?: string;
   reservationExpiryDays?: number;
+  discountEnabled?: boolean;
+  discountCombo1Tickets?: number;
+  discountCombo1Price?: number;
+  discountCombo2Tickets?: number;
+  discountCombo2Price?: number;
 }
 
 interface Prize {
@@ -584,6 +589,90 @@ export default function AdminSettings() {
                 <strong>{" {rut}"}</strong> (RUT).
               </small>
             </div>
+          </div>
+        </section>
+
+        {/* Section: Discount Combos */}
+        <section className="glass-panel" style={{ padding: '28px' }}>
+          <h3 style={{ fontSize: '1.25rem', marginBottom: '20px', borderBottom: '1px solid var(--border-glass)', paddingBottom: '10px' }}>🏷️ Combos y Packs de Descuento</h3>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '20px' }}>
+            Define ofertas especiales para incentivar la compra de múltiples números. El sistema calculará automáticamente el mejor precio para el comprador.
+          </p>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <input 
+                type="checkbox"
+                id="discountEnabled"
+                checked={config.discountEnabled || false}
+                onChange={(e) => handleConfigChange('discountEnabled', e.target.checked)}
+                style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+              />
+              <label htmlFor="discountEnabled" style={{ fontSize: '0.9rem', fontWeight: 'bold', cursor: 'pointer' }}>
+                Habilitar promociones y descuentos por volumen
+              </label>
+            </div>
+
+            {config.discountEnabled && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', borderLeft: '3px solid var(--primary)', paddingLeft: '16px', marginTop: '10px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
+                  <div>
+                    <h4 style={{ fontSize: '0.95rem', color: '#fff', marginBottom: '12px', fontWeight: 'bold' }}>Combo 1 (Ej: Pack de 3)</h4>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>Cantidad de Números</label>
+                        <input 
+                          type="number" 
+                          min={2}
+                          value={config.discountCombo1Tickets !== undefined ? config.discountCombo1Tickets : 3}
+                          onChange={(e) => handleConfigChange('discountCombo1Tickets', parseInt(e.target.value, 10))}
+                          className="input-glass"
+                        />
+                      </div>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>Precio Especial (CLP)</label>
+                        <input 
+                          type="number" 
+                          min={1}
+                          value={config.discountCombo1Price !== undefined ? config.discountCombo1Price : 5000}
+                          onChange={(e) => handleConfigChange('discountCombo1Price', parseInt(e.target.value, 10))}
+                          className="input-glass"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h4 style={{ fontSize: '0.95rem', color: '#fff', marginBottom: '12px', fontWeight: 'bold' }}>Combo 2 (Ej: Pack de 7)</h4>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>Cantidad de Números</label>
+                        <input 
+                          type="number" 
+                          min={2}
+                          value={config.discountCombo2Tickets !== undefined ? config.discountCombo2Tickets : 7}
+                          onChange={(e) => handleConfigChange('discountCombo2Tickets', parseInt(e.target.value, 10))}
+                          className="input-glass"
+                        />
+                      </div>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>Precio Especial (CLP)</label>
+                        <input 
+                          type="number" 
+                          min={1}
+                          value={config.discountCombo2Price !== undefined ? config.discountCombo2Price : 10000}
+                          onChange={(e) => handleConfigChange('discountCombo2Price', parseInt(e.target.value, 10))}
+                          className="input-glass"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <small style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>
+                  Nota: Los combos se aplicarán acumulativamente de manera inteligente para dar el mejor precio.
+                </small>
+              </div>
+            )}
           </div>
         </section>
 
