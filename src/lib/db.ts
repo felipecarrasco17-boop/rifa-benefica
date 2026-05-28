@@ -1,5 +1,15 @@
 import { createClient } from '@supabase/supabase-js';
 
+export const DEFAULT_WHATSAPP_TEMPLATE = `Hola {nombre}, te escribo de la Rifa. Tu reserva del número {numero} de la Lista {lista} (ID: {id}) por {precio} está reservada y pendiente de pago.
+
+Puedes transferir a:
+Banco: {banco}
+Tipo de Cuenta: {cuenta}
+Número: {ncuenta}
+RUT: {rut}
+
+Por favor, respóndenos con el comprobante de transferencia. ¡Muchas gracias!`;
+
 // Define Interfaces
 export interface RaffleConfig {
   title: string;
@@ -23,6 +33,8 @@ export interface RaffleConfig {
     sandboxMode: boolean;
     mockMode: boolean;
   };
+  whatsappTemplate?: string;
+  reservationExpiryDays?: number;
 }
 
 export interface Prize {
@@ -234,7 +246,11 @@ export async function getDb(): Promise<DatabaseSchema> {
       secretKey: row.flow_secret_key || '',
       sandboxMode: row.flow_sandbox_mode,
       mockMode: row.flow_mock_mode
-    }
+    },
+    whatsappTemplate: row.whatsapp_template || DEFAULT_WHATSAPP_TEMPLATE,
+    reservationExpiryDays: row.reservation_expiry_days !== undefined && row.reservation_expiry_days !== null
+      ? Number(row.reservation_expiry_days)
+      : 2 // default to 2 days
   };
 
   const { data: prizesRows, error: prizesError } = await supabase
@@ -306,31 +322,55 @@ export async function saveDb(data: DatabaseSchema): Promise<void> {
     throw new Error('Supabase no está configurado.');
   }
 
+  const updateData: any = {
+    title: data.config.title,
+    description: data.config.description,
+    ticket_price: data.config.ticketPrice,
+    draw_date: data.config.drawDate,
+    total_lists: data.config.totalLists,
+    tickets_per_list: data.config.ticketsPerList,
+    admin_email: data.config.adminEmail,
+    admin_password: data.config.adminPassword || 'AdminRifa2026!',
+    bank_name: data.config.bankTransferData.bankName,
+    account_type: data.config.bankTransferData.accountType,
+    account_number: data.config.bankTransferData.accountNumber,
+    rut: data.config.bankTransferData.rut,
+    transfer_email: data.config.bankTransferData.email,
+    flow_api_key: data.config.flowConfig.apiKey,
+    flow_secret_key: data.config.flowConfig.secretKey,
+    flow_sandbox_mode: data.config.flowConfig.sandboxMode,
+    flow_mock_mode: data.config.flowConfig.mockMode
+  };
+
+  if (data.config.whatsappTemplate !== undefined) {
+    updateData.whatsapp_template = data.config.whatsappTemplate;
+  }
+  if (data.config.reservationExpiryDays !== undefined) {
+    updateData.reservation_expiry_days = data.config.reservationExpiryDays;
+  }
+
   const { error: configError } = await supabase
     .from('raffle_config')
-    .update({
-      title: data.config.title,
-      description: data.config.description,
-      ticket_price: data.config.ticketPrice,
-      draw_date: data.config.drawDate,
-      total_lists: data.config.totalLists,
-      tickets_per_list: data.config.ticketsPerList,
-      admin_email: data.config.adminEmail,
-      admin_password: data.config.adminPassword || 'AdminRifa2026!',
-      bank_name: data.config.bankTransferData.bankName,
-      account_type: data.config.bankTransferData.accountType,
-      account_number: data.config.bankTransferData.accountNumber,
-      rut: data.config.bankTransferData.rut,
-      transfer_email: data.config.bankTransferData.email,
-      flow_api_key: data.config.flowConfig.apiKey,
-      flow_secret_key: data.config.flowConfig.secretKey,
-      flow_sandbox_mode: data.config.flowConfig.sandboxMode,
-      flow_mock_mode: data.config.flowConfig.mockMode
-    })
+    .update(updateData)
     .eq('id', 1);
 
   if (configError) {
-    throw new Error(`Error al guardar configuración en Supabase: ${configError.message}`);
+    // Graceful fallback if column doesn't exist in Supabase
+    if (configError.code === '42703') {
+      console.warn('Advertencia: Columnas nuevas no existen en Supabase. Guardando sin whatsapp_template ni reservation_expiry_days.');
+      delete updateData.whatsapp_template;
+      delete updateData.reservation_expiry_days;
+      const { error: retryError } = await supabase
+        .from('raffle_config')
+        .update(updateData)
+        .eq('id', 1);
+      
+      if (retryError) {
+        throw new Error(`Error al guardar configuración en Supabase: ${retryError.message}`);
+      }
+    } else {
+      throw new Error(`Error al guardar configuración en Supabase: ${configError.message}`);
+    }
   }
 
   // B. Save Prizes (Delete all first, then insert new ones to keep in sync)
@@ -419,6 +459,8 @@ export async function updateDb(
     oldDbClone.config.ticketsPerList !== newDb.config.ticketsPerList ||
     oldDbClone.config.adminEmail !== newDb.config.adminEmail ||
     oldDbClone.config.adminPassword !== newDb.config.adminPassword ||
+    oldDbClone.config.whatsappTemplate !== newDb.config.whatsappTemplate ||
+    oldDbClone.config.reservationExpiryDays !== newDb.config.reservationExpiryDays ||
     JSON.stringify(oldDbClone.config.bankTransferData) !== JSON.stringify(newDb.config.bankTransferData) ||
     JSON.stringify(oldDbClone.config.flowConfig) !== JSON.stringify(newDb.config.flowConfig)
   ) {

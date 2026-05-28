@@ -7,8 +7,65 @@ export async function GET(request: Request) {
   try {
     const db = await getDb();
     const { searchParams } = new URL(request.url);
-    const listIndexStr = searchParams.get('listIndex');
+    
+    // Public search by phone or email
+    const searchQuery = searchParams.get('search');
+    if (searchQuery) {
+      const query = searchQuery.trim().toLowerCase();
+      if (query.length < 4) {
+        return NextResponse.json({ error: 'La búsqueda debe tener al menos 4 caracteres' }, { status: 400 });
+      }
 
+      const matchedTickets = Object.values(db.tickets).filter((t) => {
+        if (t.status === 'available') return false;
+
+        const emailMatch = t.buyerEmail && t.buyerEmail.toLowerCase().trim() === query;
+
+        const cleanPhone = (p: string | null) => p ? p.replace(/[^0-9]/g, '') : '';
+        const cleanQ = query.replace(/[^0-9]/g, '');
+
+        let phoneMatch = false;
+        if (t.buyerPhone && cleanQ) {
+          const tPhone = cleanPhone(t.buyerPhone);
+          phoneMatch = tPhone.endsWith(cleanQ) || cleanQ.endsWith(tPhone);
+        }
+
+        return emailMatch || phoneMatch;
+      });
+
+      // Sanitize names for privacy in public search
+      const sanitized = matchedTickets.map(t => {
+        // Strip out seller placeholders if any
+        let cleanName = t.buyerName || '';
+        if (cleanName.startsWith('Responsable:')) {
+          cleanName = cleanName.replace('Responsable:', '').trim();
+        } else {
+          const sellerMatch = cleanName.match(/^(.*?)\s*\[Vendedor:.*\]$/);
+          if (sellerMatch) {
+            cleanName = sellerMatch[1].trim();
+          }
+        }
+        
+        const firstWord = cleanName.split(' ')[0] || 'Comprador';
+        const maskedName = firstWord.length > 2 
+          ? firstWord.substring(0, 3) + '***' 
+          : firstWord + '***';
+
+        return {
+          id: t.id,
+          listIndex: t.listIndex,
+          numberIndex: t.numberIndex,
+          status: t.status,
+          buyerName: maskedName,
+          reservedAt: t.reservedAt,
+          paymentMethod: t.paymentMethod
+        };
+      });
+
+      return NextResponse.json({ tickets: sanitized });
+    }
+
+    const listIndexStr = searchParams.get('listIndex');
     if (listIndexStr) {
       const listIndex = parseInt(listIndexStr, 10);
       if (isNaN(listIndex)) {
@@ -22,7 +79,7 @@ export async function GET(request: Request) {
       return NextResponse.json({ tickets: listTickets });
     }
 
-    // Otherwise return all tickets
+    // Otherwise return all tickets (admin usage)
     return NextResponse.json({ tickets: Object.values(db.tickets) });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -92,7 +149,7 @@ export async function POST(request: Request) {
 export async function PUT(request: Request) {
   try {
     const body = await request.json();
-    const { ticketId, status, buyerName, buyerPhone, buyerEmail, paymentMethod } = body;
+    const { ticketId, status, buyerName, buyerPhone, buyerEmail, paymentMethod, reservedAt } = body;
 
     if (!ticketId) {
       return NextResponse.json({ error: 'ID de ticket requerido' }, { status: 400 });
@@ -127,6 +184,7 @@ export async function PUT(request: Request) {
           buyerPhone: buyerPhone !== undefined ? buyerPhone : ticket.buyerPhone,
           buyerEmail: buyerEmail !== undefined ? buyerEmail : ticket.buyerEmail,
           paymentMethod: paymentMethod !== undefined ? paymentMethod : ticket.paymentMethod,
+          reservedAt: reservedAt !== undefined ? reservedAt : ticket.reservedAt,
         };
       }
 

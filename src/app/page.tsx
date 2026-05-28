@@ -65,6 +65,36 @@ export default function PublicHome() {
   // Countdown timer State
   const [timeLeft, setTimeLeft] = useState<{ days: number; hours: number; minutes: number; seconds: number } | null>(null);
 
+  // Public Ticket Search State
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [searching, setSearching] = useState<boolean>(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [hasSearched, setHasSearched] = useState<boolean>(false);
+
+  const handlePublicSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const query = searchQuery.trim();
+    if (query.length < 4) {
+      setSearchError('Por favor ingresa al menos 4 caracteres para buscar (ej. tu teléfono o email).');
+      return;
+    }
+    setSearching(true);
+    setSearchError(null);
+    setHasSearched(true);
+    try {
+      const res = await fetch(`/api/tickets?search=${encodeURIComponent(query)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Error al realizar la búsqueda.');
+      setSearchResults(data.tickets || []);
+    } catch (err: any) {
+      setSearchError(err.message);
+      setSearchResults([]);
+    } finally {
+      setSearching(false);
+    }
+  };
+
   // Fetch initial configuration & prizes
   useEffect(() => {
     async function initData() {
@@ -446,6 +476,73 @@ export default function PublicHome() {
         </div>
       </section>
 
+      {/* Public Search Reservation Section */}
+      <section className="glass-panel" style={{ padding: '32px 24px', marginBottom: '64px' }}>
+        <h2 style={{ fontSize: '1.6rem', marginBottom: '12px', textAlign: 'center', fontWeight: '700' }}>🔍 Consultar mis Números Reservados/Comprados</h2>
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', textAlign: 'center', marginBottom: '24px', maxWidth: '600px', margin: '0 auto 24px' }}>
+          ¿Ya realizaste una reserva o compra? Ingresa el teléfono o correo electrónico con el que registraste tu compra para verificar el estado de tus números.
+        </p>
+
+        <form onSubmit={handlePublicSearch} style={{ maxWidth: '500px', margin: '0 auto 20px', display: 'flex', gap: '12px' }}>
+          <input 
+            type="text" 
+            placeholder="Ej: +56912345678 o tu@correo.com"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="input-glass"
+            style={{ flex: 1 }}
+          />
+          <button type="submit" className="btn-glow" disabled={searching} style={{ padding: '0 24px', height: '46px', whiteSpace: 'nowrap' }}>
+            {searching ? 'Buscando...' : 'Consultar'}
+          </button>
+        </form>
+
+        {searchError && (
+          <div style={{ background: 'var(--danger-glow)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#f87171', padding: '12px', borderRadius: '8px', fontSize: '0.85rem', maxWidth: '500px', margin: '0 auto 20px', textAlign: 'center' }}>
+            ⚠️ {searchError}
+          </div>
+        )}
+
+        {hasSearched && !searching && (
+          <div style={{ maxWidth: '600px', margin: '20px auto 0' }}>
+            {searchResults.length > 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <h4 style={{ fontSize: '1rem', color: 'var(--primary)', marginBottom: '8px' }}>Números encontrados ({searchResults.length}):</h4>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '12px' }}>
+                  {searchResults.map((t) => (
+                    <div key={t.id} style={{ background: 'rgba(255, 255, 255, 0.02)', border: '1px solid var(--border-glass)', borderRadius: '12px', padding: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <div style={{ fontWeight: 'bold', fontSize: '1.1rem', color: '#fff' }}>
+                          Número {t.numberIndex} <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 'normal' }}>de Lista {getExcelLabel(t.listIndex)}</span>
+                        </div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                          Registrado a: {t.buyerName}
+                        </div>
+                      </div>
+                      <span style={{ 
+                        fontSize: '0.75rem', 
+                        fontWeight: 'bold', 
+                        padding: '4px 10px', 
+                        borderRadius: '6px', 
+                        background: t.status === 'paid' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)',
+                        color: t.status === 'paid' ? '#34d399' : '#fbbf24',
+                        border: t.status === 'paid' ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid rgba(245, 158, 11, 0.3)'
+                      }}>
+                        {t.status === 'paid' ? '🟢 PAGADO' : '🟡 RESERVADO'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div style={{ background: 'rgba(255, 255, 255, 0.01)', border: '1px solid var(--border-glass)', padding: '20px', borderRadius: '12px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                📭 No se encontraron números reservados o pagados asociados a ese contacto. Asegúrate de escribirlo exactamente como lo registraste.
+              </div>
+            )}
+          </div>
+        )}
+      </section>
+
       {/* Floating Cart */}
       {selectedNumbers.length > 0 && (
         <div style={{
@@ -616,14 +713,125 @@ export default function PublicHome() {
             ) : (
               // Transfer Success details
               <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: '3rem', marginBottom: '16px' }}>🎉</div>
-                <h3 style={{ fontSize: '1.4rem', marginBottom: '12px', color: 'var(--success)' }}>¡Reserva Exitosa!</h3>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '24px', lineHeight: '1.5' }}>
+                <div style={{ fontSize: '3rem', marginBottom: '16px' }} className="no-print">🎉</div>
+                <h3 style={{ fontSize: '1.4rem', marginBottom: '12px', color: 'var(--success)' }} className="no-print">¡Reserva Exitosa!</h3>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '24px', lineHeight: '1.5' }} className="no-print">
                   {checkoutResult.message}
                 </p>
 
+                {/* Premium Digital Ticket */}
+                <div className="print-area" style={{
+                  background: 'linear-gradient(135deg, rgba(30, 41, 59, 0.7) 0%, rgba(15, 23, 42, 0.9) 100%)',
+                  border: '2px solid rgba(0, 242, 254, 0.25)',
+                  boxShadow: '0 0 30px rgba(0, 242, 254, 0.15)',
+                  borderRadius: '16px',
+                  padding: '24px',
+                  position: 'relative',
+                  marginBottom: '24px',
+                  textAlign: 'left',
+                  overflow: 'hidden'
+                }}>
+                  {/* Notches on sides */}
+                  <div style={{ position: 'absolute', top: '50%', left: '-12px', width: '24px', height: '24px', borderRadius: '50%', background: 'rgba(15, 23, 42, 1)', borderRight: '2px solid rgba(0, 242, 254, 0.25)', transform: 'translateY(-50%)' }} />
+                  <div style={{ position: 'absolute', top: '50%', right: '-12px', width: '24px', height: '24px', borderRadius: '50%', background: 'rgba(15, 23, 42, 1)', borderLeft: '2px solid rgba(0, 242, 254, 0.25)', transform: 'translateY(-50%)' }} />
+                  
+                  {/* Header */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1px dashed rgba(255,255,255,0.15)', paddingBottom: '16px', marginBottom: '16px' }}>
+                    <div>
+                      <span style={{ fontSize: '0.7rem', color: 'var(--primary)', fontWeight: 'bold', letterSpacing: '0.1em', textTransform: 'uppercase' }}>BOLETO OFICIAL DE RIFA</span>
+                      <h4 style={{ fontSize: '1.2rem', color: '#fff', margin: '4px 0 0 0', fontWeight: 'bold' }}>{config.title}</h4>
+                    </div>
+                    <span style={{ 
+                      fontSize: '0.75rem', 
+                      fontWeight: 'bold', 
+                      padding: '4px 10px', 
+                      borderRadius: '6px', 
+                      background: 'rgba(245, 158, 11, 0.15)', 
+                      color: '#fbbf24',
+                      border: '1px solid rgba(245, 158, 11, 0.3)',
+                      whiteSpace: 'nowrap'
+                    }}>
+                      🟡 RESERVADO
+                    </span>
+                  </div>
+
+                  {/* Info grid */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '16px', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <div>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Comprador:</span>
+                        <div style={{ fontSize: '1rem', color: '#fff', fontWeight: 'bold' }}>{buyerName}</div>
+                      </div>
+                      <div>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Teléfono:</span>
+                        <div style={{ fontSize: '0.9rem', color: '#fff', fontWeight: '500' }}>{buyerPhone}</div>
+                      </div>
+                      <div>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Fecha Sorteo:</span>
+                        <div style={{ fontSize: '0.85rem', color: '#fff' }}>{new Date(config.drawDate).toLocaleDateString('es-CL', { day: 'numeric', month: 'long', year: 'numeric' })}</div>
+                      </div>
+                    </div>
+                    
+                    {/* Decorative QR */}
+                    <div style={{ padding: '8px', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-glass)', borderRadius: '12px' }} className="no-print">
+                      <svg width="60" height="60" viewBox="0 0 29 29" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'var(--primary)' }}>
+                        <path d="M1 1h6v6H1V1zm0 21h6v6H1v-6zm21 0h6v6h-6v-6zM21 1h6v6h-6V1z" fill="currentColor" />
+                        <path d="M12 2h2v4h-2V2zm3 0h2v1h-2V2zm0 3h2v2h-2V5zm-3 8h2v2h-2v-2zm3 0h3v1h-3v-1zm5 0h2v4h-2v-4zm-5 3h2v2h-2v-2zm-3 3h2v2h-2v-2zm3 0h2v3h-2v-3zm3 0h2v1h-2v-1zm3 0h2v3h-2v-3zm-9 3h2v2H9v-2zm3 0h2v1h-2v-1zm5 0h2v2h-2v-2zm-9 3h3v1H8v-1zm5 0h2v2h-2v-2zm3 0h2v1h-2v-1z" fill="currentColor" />
+                      </svg>
+                    </div>
+                  </div>
+
+                  {/* Tickets section */}
+                  <div style={{ marginTop: '20px', paddingTop: '16px', borderTop: '1px dashed rgba(255,255,255,0.15)' }}>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'block', marginBottom: '8px' }}>Números Reservados:</span>
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                      {checkoutResult.ticketIds?.map((id) => {
+                        const parts = id.split('-');
+                        const listLabel = getExcelLabel(parseInt(parts[0], 10));
+                        const numLabel = parts[1];
+                        return (
+                          <div key={id} style={{
+                            background: 'linear-gradient(135deg, rgba(0, 242, 254, 0.1) 0%, transparent 100%)',
+                            border: '1px solid var(--primary)',
+                            borderRadius: '8px',
+                            padding: '6px 12px',
+                            fontSize: '0.85rem',
+                            fontWeight: 'bold',
+                            color: '#fff',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '4px'
+                          }}>
+                            <span>Lista {listLabel}</span>
+                            <span style={{ color: 'var(--primary)' }}>•</span>
+                            <span>N° {numLabel}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="btn-glow no-print"
+                  style={{
+                    marginBottom: '24px',
+                    width: '100%',
+                    fontWeight: 'bold',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '8px',
+                    background: 'linear-gradient(135deg, #a855f7 0%, #3b82f6 100%)'
+                  }}
+                >
+                  🖨️ Descargar Boleto / Guardar PDF
+                </button>
+
                 {/* Transfer data block */}
-                <div className="glass-panel" style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', textAlign: 'left', borderRadius: '12px', marginBottom: '24px', fontSize: '0.9rem' }}>
+                <div className="glass-panel no-print" style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', textAlign: 'left', borderRadius: '12px', marginBottom: '24px', fontSize: '0.9rem' }}>
                   <h4 style={{ fontSize: '0.95rem', marginBottom: '12px', borderBottom: '1px solid var(--border-glass)', paddingBottom: '6px' }}>Datos para Transferencia:</h4>
                   <div style={{ display: 'grid', gridTemplateColumns: '90px 1fr', gap: '8px 12px' }}>
                     <span style={{ color: 'var(--text-secondary)' }}>Banco:</span>
@@ -646,7 +854,7 @@ export default function PublicHome() {
                   </div>
                 </div>
 
-                <div style={{ background: 'rgba(245, 158, 11, 0.05)', border: '1px solid rgba(245, 158, 11, 0.2)', padding: '12px', borderRadius: '8px', fontSize: '0.8rem', color: '#fbbf24', textAlign: 'left', marginBottom: '24px', lineHeight: '1.4' }}>
+                <div style={{ background: 'rgba(245, 158, 11, 0.05)', border: '1px solid rgba(245, 158, 11, 0.2)', padding: '12px', borderRadius: '8px', fontSize: '0.8rem', color: '#fbbf24', textAlign: 'left', marginBottom: '24px', lineHeight: '1.4' }} className="no-print">
                   ⚠️ <strong>Importante:</strong> Envía el comprobante de transferencia al correo <strong>{checkoutResult.transferDetails?.email}</strong> indicando tu nombre y que compraste el/los números: <strong>{checkoutResult.ticketIds?.map(id => id.split('-')[1]).join(', ')} (Lista {getExcelLabel(selectedList)})</strong>. Tus números quedarán reservados y serán marcados como "PAGADO" una vez verificado el depósito.
                 </div>
 
@@ -655,7 +863,7 @@ export default function PublicHome() {
                     setShowCheckoutModal(false);
                     setCheckoutResult(null);
                   }}
-                  className="btn-glass"
+                  className="btn-glass no-print"
                   style={{ width: '100%' }}
                 >
                   Entendido, cerrar
@@ -666,13 +874,39 @@ export default function PublicHome() {
         </div>
       )}
 
-      {/* Styled JSX for local hover animations */}
+      {/* Styled JSX for local hover and print styles */}
       <style jsx>{`
         .ticket-cell:hover {
           transform: translateY(-4px) scale(1.03);
           border-color: var(--primary) !important;
           background: rgba(0, 242, 254, 0.05) !important;
           box-shadow: 0 4px 12px rgba(0, 242, 254, 0.1);
+        }
+        @media print {
+          body * {
+            visibility: hidden;
+          }
+          .print-area, .print-area * {
+            visibility: visible;
+          }
+          .print-area {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100% !important;
+            max-width: 100% !important;
+            margin: 0 !important;
+            padding: 24px !important;
+            box-shadow: none !important;
+            background: #0f172a !important;
+            color: #fff !important;
+            border: 2px solid #00f2fe !important;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
+          .no-print {
+            display: none !important;
+          }
         }
       `}</style>
     </main>

@@ -1,8 +1,10 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { getExcelLabel, excelLabelToIndex } from '@/lib/utils';
+
+const priceFormatter = new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP' });
 
 interface RaffleConfig {
   title: string;
@@ -10,6 +12,15 @@ interface RaffleConfig {
   totalLists: number;
   ticketsPerList: number;
   adminEmail: string;
+  bankTransferData?: {
+    bankName: string;
+    accountType: string;
+    accountNumber: string;
+    rut: string;
+    email: string;
+  };
+  reservationExpiryDays?: number;
+  whatsappTemplate?: string;
 }
 
 interface Ticket {
@@ -39,6 +50,7 @@ export default function AdminDashboard() {
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
   const [showBulkModal, setShowBulkModal] = useState<boolean>(false);
   const [bulkType, setBulkType] = useState<'responsible' | 'buyer'>('responsible');
+  const [isEditingTicket, setIsEditingTicket] = useState<boolean>(false);
 
   // Manual Assignment Form State
   const [buyerName, setBuyerName] = useState<string>('');
@@ -47,6 +59,202 @@ export default function AdminDashboard() {
   const [paymentMethod, setPaymentMethod] = useState<'transfer' | 'flow' | 'manual'>('manual');
   const [ticketStatus, setTicketStatus] = useState<'reserved' | 'paid'>('paid');
   const [submitting, setSubmitting] = useState<boolean>(false);
+
+  // Helpers for Seller Performance & Name Sanitization
+  const parseSellerInfo = (name: string | null) => {
+    if (!name) return null;
+    const match = name.match(/\[Vendedor:\s*(.*?)(?:\|(.*?))?\]/);
+    if (match) {
+      return { name: match[1].trim(), phone: match[2]?.trim() || '' };
+    }
+    return null;
+  };
+
+  const cleanBuyerName = (name: string | null) => {
+    if (!name) return '';
+    if (name.startsWith('Responsable:')) return name;
+    const match = name.match(/^(.*?)\s*\[Vendedor:.*\]$/);
+    return match ? match[1].trim() : name;
+  };
+
+  const formatWhatsAppMessage = (ticket: Ticket) => {
+    const defaultTemplate = `Hola {nombre}, te escribo de la Rifa. Tu reserva del número {numero} de la Lista {lista} (ID: {id}) por {precio} está reservada y pendiente de pago.\n\nPuedes transferir a:\nBanco: {banco}\nTipo de Cuenta: {cuenta}\nNúmero: {ncuenta}\nRUT: {rut}\n\nPor favor, respóndenos con el comprobante de transferencia. ¡Muchas gracias!`;
+    const template = config?.whatsappTemplate || defaultTemplate;
+    
+    const buyerNameClean = ticket.buyerName?.startsWith('Responsable:') 
+      ? ticket.buyerName.replace('Responsable:', '').trim() 
+      : cleanBuyerName(ticket.buyerName);
+      
+    return template
+      .replace(/{nombre}/g, buyerNameClean || '')
+      .replace(/{numero}/g, String(ticket.numberIndex))
+      .replace(/{lista}/g, getExcelLabel(ticket.listIndex))
+      .replace(/{id}/g, ticket.id)
+      .replace(/{precio}/g, priceFormatter.format(config?.ticketPrice || 0))
+      .replace(/{banco}/g, config?.bankTransferData?.bankName || '')
+      .replace(/{cuenta}/g, config?.bankTransferData?.accountType || '')
+      .replace(/{ncuenta}/g, config?.bankTransferData?.accountNumber || '')
+      .replace(/{rut}/g, config?.bankTransferData?.rut || '');
+  };
+
+  const getListSellerInfo = (listIdx: number) => {
+    const listTickets = tickets.filter(t => t.listIndex === listIdx);
+    for (const t of listTickets) {
+      if (!t.buyerName) continue;
+      if (t.buyerName.startsWith('Responsable:')) {
+        return {
+          name: t.buyerName.replace('Responsable:', '').trim(),
+          phone: t.buyerPhone || ''
+        };
+      }
+      const match = parseSellerInfo(t.buyerName);
+      if (match) return match;
+    }
+    return null;
+  };
+
+  const sellersPerformance = useMemo(() => {
+    if (!config) return [];
+    
+    const listSellers: Record<number, { name: string; phone: string }> = {};
+    for (let l = 1; l <= config.totalLists; l++) {
+      const info = getListSellerInfo(l);
+      if (info) listSellers[l] = info;
+    }
+
+    const sellersMap: Record<string, {
+      name: string;
+      phone: string;
+      lists: number[];
+      paidCount: number;
+      reservedCount: number;
+      totalCount: number;
+    }> = {};
+
+    for (const [listIdxStr, seller] of Object.entries(listSellers)) {
+      const listIdx = parseInt(listIdxStr, 10);
+      const sellerKey = seller.name.toLowerCase().trim();
+      
+      if (!sellersMap[sellerKey]) {
+        sellersMap[sellerKey] = {
+          name: seller.name,
+          phone: seller.phone,
+          lists: [],
+          paidCount: 0,
+          reservedCount: 0,
+          totalCount: 0
+        };
+      }
+      
+      if (seller.phone && !sellersMap[sellerKey].phone) {
+        sellersMap[sellerKey].phone = seller.phone;
+      }
+      
+      sellersMap[sellerKey].lists.push(listIdx);
+      
+      const listTickets = tickets.filter(t => t.listIndex === listIdx);
+      const paid = listTickets.filter(t => t.status === 'paid').length;
+      const reserved = listTickets.filter(t => t.status === 'reserved').length;
+      
+      sellersMap[sellerKey].paidCount += paid;
+      sellersMap[sellerKey].reservedCount += reserved;
+      sellersMap[sellerKey].totalCount += config.ticketsPerList;
+    }
+
+    return Object.values(sellersMap).sort((a, b) => b.paidCount - a.paidCount);
+  }, [tickets, config]);
+
+  const listStats = useMemo(() => {
+    if (!config) return {};
+    const stats: Record<number, { paid: number; reserved: number; status: 'empty' | 'partial' | 'full' }> = {};
+    for (let l = 1; l <= config.totalLists; l++) {
+      stats[l] = { paid: 0, reserved: 0, status: 'empty' };
+    }
+    
+    tickets.forEach((t) => {
+      if (stats[t.listIndex]) {
+        if (t.status === 'paid') stats[t.listIndex].paid++;
+        if (t.status === 'reserved') stats[t.listIndex].reserved++;
+      }
+    });
+
+    for (let l = 1; l <= config.totalLists; l++) {
+      const s = stats[l];
+      const totalSold = s.paid + s.reserved;
+      if (s.paid === config.ticketsPerList) {
+        s.status = 'full';
+      } else if (totalSold > 0) {
+        s.status = 'partial';
+      } else {
+        s.status = 'empty';
+      }
+    }
+    
+    return stats;
+  }, [tickets, config]);
+
+  const expiredReservations = useMemo(() => {
+    if (!config || tickets.length === 0) return [];
+    
+    const expiryDays = config.reservationExpiryDays !== undefined ? config.reservationExpiryDays : 2;
+    const expiryMs = expiryDays * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+
+    return tickets.filter((t) => {
+      if (t.status !== 'reserved' || !t.reservedAt) return false;
+      
+      try {
+        const reservedTime = new Date(t.reservedAt).getTime();
+        if (isNaN(reservedTime)) return false;
+        
+        return (now - reservedTime) > expiryMs;
+      } catch (e) {
+        return false;
+      }
+    });
+  }, [tickets, config]);
+
+  const handleSaveTicketEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedTicket) return;
+    if (!buyerName.trim() || !buyerPhone.trim()) {
+      alert('Nombre y Teléfono son obligatorios.');
+      return;
+    }
+    
+    setSubmitting(true);
+    try {
+      const sellerInfo = getListSellerInfo(selectedTicket.listIndex);
+      const finalBuyerName = sellerInfo 
+        ? `${buyerName.trim()} [Vendedor: ${sellerInfo.name}${sellerInfo.phone ? `|${sellerInfo.phone}` : ''}]`
+        : buyerName.trim();
+
+      const res = await fetch('/api/tickets', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ticketId: selectedTicket.id,
+          buyerName: finalBuyerName,
+          buyerPhone: buyerPhone.trim(),
+          buyerEmail: buyerEmail.trim(),
+          status: ticketStatus,
+          paymentMethod,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Error al actualizar');
+      
+      setTickets((prev) =>
+        prev.map((t) => (t.id === selectedTicket.id ? data.ticket : t))
+      );
+      setSelectedTicket(null);
+      setIsEditingTicket(false);
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   // Fetch all config and tickets on mount
   const fetchData = async () => {
@@ -220,11 +428,15 @@ export default function AdminDashboard() {
   // Open ticket details modal and initialize form values
   const openTicketModal = (ticket: Ticket) => {
     setSelectedTicket(ticket);
-    setBuyerName(ticket.buyerName || '');
-    setBuyerPhone(ticket.buyerPhone || '');
-    setBuyerEmail(ticket.buyerEmail || '');
+    const seller = parseSellerInfo(ticket.buyerName);
+    const isSellerPlaceholder = ticket.buyerName?.startsWith('Responsable:');
+    
+    setBuyerName(isSellerPlaceholder ? '' : (cleanBuyerName(ticket.buyerName) || ''));
+    setBuyerPhone(isSellerPlaceholder ? '' : (ticket.buyerPhone || ''));
+    setBuyerEmail(isSellerPlaceholder ? '' : (ticket.buyerEmail || ''));
     setPaymentMethod(ticket.paymentMethod || 'manual');
     setTicketStatus(ticket.status === 'paid' ? 'paid' : 'reserved');
+    setIsEditingTicket(false);
   };
 
   if (loading) {
@@ -324,7 +536,6 @@ export default function AdminDashboard() {
       )
     : [];
 
-  const priceFormatter = new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP' });
 
   return (
     <main style={{ maxWidth: '1200px', margin: '0 auto', padding: '24px 16px', width: '100%' }}>
@@ -432,6 +643,194 @@ export default function AdminDashboard() {
           </p>
         </div>
 
+      </section>
+
+      {/* Expired Reservations Table */}
+      {expiredReservations.length > 0 && (
+        <section className="glass-panel" style={{ 
+          padding: '24px', 
+          marginBottom: '32px', 
+          background: 'rgba(239, 68, 68, 0.02)', 
+          borderColor: 'rgba(239, 68, 68, 0.3)',
+          boxShadow: '0 0 25px rgba(239, 68, 68, 0.03)' 
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
+            <div>
+              <h3 style={{ fontSize: '1.2rem', color: '#f87171', display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
+                ⚠️ Control de Reservas Caducadas ({expiredReservations.length})
+              </h3>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', marginTop: '4px', margin: 0 }}>
+                Las siguientes reservas superaron el límite de {config.reservationExpiryDays || 2} días. Elige si liberar el número o renovar su período de gracia.
+              </p>
+            </div>
+            <button
+              onClick={async () => {
+                if (confirm(`¿Estás seguro de que deseas LIBERAR las ${expiredReservations.length} reservas expiradas de una vez?`)) {
+                  setSubmitting(true);
+                  let successCount = 0;
+                  for (const t of expiredReservations) {
+                    try {
+                      const res = await fetch('/api/tickets', {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ ticketId: t.id, status: 'available' })
+                      });
+                      if (res.ok) successCount++;
+                    } catch (e) {
+                      console.error(e);
+                    }
+                  }
+                  await fetchData();
+                  setSubmitting(false);
+                  alert(`Se han liberado ${successCount} boletos exitosamente.`);
+                }
+              }}
+              className="btn-glass"
+              style={{ borderColor: 'var(--danger)', color: '#f87171', fontSize: '0.8rem' }}
+              disabled={submitting}
+            >
+              🔓 Liberar Todas Masivamente
+            </button>
+          </div>
+
+          <div style={{ maxHeight: '250px', overflowY: 'auto', border: '1px solid var(--border-glass)', borderRadius: '8px', background: 'rgba(0,0,0,0.15)' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
+              <thead>
+                <tr style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid var(--border-glass)' }}>
+                  <th style={{ padding: '10px 14px', color: 'var(--text-secondary)' }}>Boleto</th>
+                  <th style={{ padding: '10px 14px', color: 'var(--text-secondary)' }}>Comprador</th>
+                  <th style={{ padding: '10px 14px', color: 'var(--text-secondary)' }}>Teléfono</th>
+                  <th style={{ padding: '10px 14px', color: 'var(--text-secondary)' }}>Fecha Reserva</th>
+                  <th style={{ padding: '10px 14px', color: 'var(--text-secondary)' }}>Tiempo Transcurrido</th>
+                  <th style={{ padding: '10px 14px', color: 'var(--text-secondary)', textAlign: 'right' }}>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {expiredReservations.map((t) => {
+                  const daysElapsed = t.reservedAt 
+                    ? ((Date.now() - new Date(t.reservedAt).getTime()) / (1000 * 60 * 60 * 24)).toFixed(1)
+                    : '?';
+                  const formattedDate = t.reservedAt 
+                    ? new Date(t.reservedAt).toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+                    : '?';
+                    
+                  return (
+                    <tr key={t.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                      <td style={{ padding: '10px 14px', fontWeight: 'bold' }}>
+                        Lista {getExcelLabel(t.listIndex)} - N° {t.numberIndex}
+                      </td>
+                      <td style={{ padding: '10px 14px' }}>{cleanBuyerName(t.buyerName)}</td>
+                      <td style={{ padding: '10px 14px', fontFamily: 'monospace' }}>{t.buyerPhone}</td>
+                      <td style={{ padding: '10px 14px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>{formattedDate}</td>
+                      <td style={{ padding: '10px 14px', color: '#f87171', fontWeight: '500' }}>{daysElapsed} días</td>
+                      <td style={{ padding: '10px 14px', textAlign: 'right' }}>
+                        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateTicket(t.id, { status: 'available' })}
+                            className="btn-glass"
+                            style={{ padding: '4px 8px', fontSize: '0.75rem', borderColor: 'var(--danger)', color: '#f87171' }}
+                            disabled={submitting}
+                          >
+                            Liberar 🔓
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateTicket(t.id, { reservedAt: new Date().toISOString() })}
+                            className="btn-glass"
+                            style={{ padding: '4px 8px', fontSize: '0.75rem', borderColor: 'var(--success)', color: '#34d399' }}
+                            disabled={submitting}
+                          >
+                            Mantener 🔄
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {/* List Heatmap Panel */}
+      <section className="glass-panel" style={{ padding: '20px', marginBottom: '32px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '12px' }}>
+          <div>
+            <h3 style={{ fontSize: '1.2rem', display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>🗺️ Mapa de Calor de Listas</h3>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', marginTop: '4px', margin: 0 }}>
+              Haz clic en cualquier casilla para ver los números de esa lista en el visualizador.
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: '12px', fontSize: '0.75rem', flexWrap: 'wrap' }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><span style={{ width: '10px', height: '10px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '2px' }} /> Vacía</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><span style={{ width: '10px', height: '10px', background: 'rgba(139, 92, 246, 0.15)', border: '1px solid #c084fc', borderRadius: '2px' }} /> En Proceso</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><span style={{ width: '10px', height: '10px', background: 'rgba(16, 185, 129, 0.2)', border: '1px solid #10b981', borderRadius: '2px' }} /> ¡Agotada!</span>
+          </div>
+        </div>
+        <div style={{ 
+          display: 'grid', 
+          gridTemplateColumns: 'repeat(auto-fill, minmax(36px, 1fr))', 
+          gap: '6px', 
+          maxHeight: '180px', 
+          overflowY: 'auto',
+          paddingRight: '4px'
+        }}>
+          {Array.from({ length: config.totalLists }, (_, i) => i + 1).map((l) => {
+            const stats = listStats[l];
+            let bg = 'rgba(255, 255, 255, 0.03)';
+            let border = '1px solid rgba(255, 255, 255, 0.08)';
+            let color = 'var(--text-secondary)';
+            let titleStr = `Lista ${getExcelLabel(l)}: Disponible`;
+
+            if (stats) {
+              if (stats.status === 'full') {
+                bg = 'rgba(16, 185, 129, 0.2)';
+                border = '1px solid #10b981';
+                color = '#34d399';
+                titleStr = `Lista ${getExcelLabel(l)}: ¡AGOTADA! (15/15 Pagados)`;
+              } else if (stats.status === 'partial') {
+                const totalSold = stats.paid + stats.reserved;
+                bg = 'rgba(139, 92, 246, 0.15)';
+                border = '1px solid #c084fc';
+                color = '#d8b4fe';
+                titleStr = `Lista ${getExcelLabel(l)}: ${stats.paid} Pagados, ${stats.reserved} Reservados`;
+              }
+            }
+            
+            if (selectedList === l) {
+              border = '2px solid var(--primary)';
+              bg = stats?.status === 'full' ? 'rgba(16, 185, 129, 0.35)' : 'rgba(0, 242, 254, 0.15)';
+              color = '#fff';
+            }
+
+            return (
+              <button
+                key={l}
+                type="button"
+                onClick={() => setSelectedList(l)}
+                title={titleStr}
+                style={{
+                  background: bg,
+                  border,
+                  color,
+                  borderRadius: '4px',
+                  height: '28px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '0.7rem',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  transition: 'var(--transition)',
+                }}
+              >
+                {getExcelLabel(l)}
+              </button>
+            );
+          })}
+        </div>
       </section>
 
       {/* Main Grid: Left List Viewer, Right Search / Logs */}
@@ -602,7 +1001,9 @@ export default function AdminDashboard() {
                   <div>{ticket.numberIndex}</div>
                   {ticket.buyerName && (
                     <div style={{ fontSize: '0.65rem', fontWeight: 'normal', color: 'var(--text-secondary)', maxWidth: '90%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {ticket.buyerName.split(' ')[0]}
+                      {(ticket.buyerName.startsWith('Responsable:') 
+                        ? ticket.buyerName.replace('Responsable:', '').trim() 
+                        : cleanBuyerName(ticket.buyerName)).split(' ')[0]}
                     </div>
                   )}
                 </div>
@@ -656,13 +1057,35 @@ export default function AdminDashboard() {
                       className="search-item"
                     >
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                        <strong>{t.buyerName}</strong>
+                        <strong>
+                          {t.buyerName?.startsWith('Responsable:') 
+                            ? `Responsable: ${t.buyerName.replace('Responsable:', '').trim()}` 
+                            : cleanBuyerName(t.buyerName)}
+                        </strong>
                         <span className={`badge ${t.status === 'paid' ? 'badge-success' : 'badge-warning'}`}>
                           {t.status === 'paid' ? 'PAGADO' : 'RESERVADO'}
                         </span>
                       </div>
-                      <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                        📞 {t.buyerPhone} | 📧 {t.buyerEmail}
+                      {parseSellerInfo(t.buyerName) && (
+                        <div style={{ fontSize: '0.75rem', color: '#c084fc', marginBottom: '4px' }}>
+                          🧑‍💼 Vendedor: {parseSellerInfo(t.buyerName)?.name}
+                        </div>
+                      )}
+                      <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }} onClick={(e) => e.stopPropagation()}>
+                        <span>📞 {t.buyerPhone}</span>
+                        {t.status === 'reserved' && t.buyerPhone && (
+                          <a
+                            href={`https://api.whatsapp.com/send?phone=${t.buyerPhone.replace(/[^0-9]/g, '')}&text=${encodeURIComponent(
+                              formatWhatsAppMessage(t)
+                            )}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{ color: '#25D366', textDecoration: 'none', fontSize: '0.7rem', fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', gap: '2px', background: 'rgba(37, 211, 102, 0.1)', padding: '2px 6px', borderRadius: '4px', border: '1px solid rgba(37, 211, 102, 0.2)' }}
+                          >
+                            💬 Cobrar por WhatsApp
+                          </a>
+                        )}
+                        <span>| 📧 {t.buyerEmail || 'Sin registrar'}</span>
                       </div>
                       <div style={{ fontSize: '0.8rem', color: 'var(--primary)', fontWeight: '600', marginTop: '4px' }}>
                         Número: {t.numberIndex} de Lista {getExcelLabel(t.listIndex)} (ID: {t.id})
@@ -680,6 +1103,96 @@ export default function AdminDashboard() {
             )}
           </div>
           
+          {/* Panel de Rendimiento de Vendedores */}
+          <div className="glass-panel" style={{ padding: '24px' }}>
+            <h3 style={{ fontSize: '1.25rem', marginBottom: '4px' }}>Rendimiento de Vendedores</h3>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', marginBottom: '16px' }}>
+              Seguimiento de ventas por vendedor responsable de lista.
+            </p>
+
+            {sellersPerformance.length > 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', maxHeight: '400px', overflowY: 'auto' }}>
+                {sellersPerformance.map((seller) => {
+                  const progress = seller.totalCount > 0 ? (seller.paidCount / seller.totalCount) * 100 : 0;
+                  
+                  return (
+                    <div 
+                      key={seller.name}
+                      style={{ 
+                        background: 'rgba(255,255,255,0.02)', 
+                        border: '1px solid var(--border-glass)', 
+                        borderRadius: '12px', 
+                        padding: '14px',
+                        transition: 'var(--transition)'
+                      }}
+                      className="seller-card"
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '6px' }}>
+                        <div>
+                          <strong style={{ fontSize: '0.95rem', color: '#fff' }}>{seller.name}</strong>
+                          {seller.phone && (
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                              📞 {seller.phone}
+                            </div>
+                          )}
+                        </div>
+                        <span style={{ 
+                          fontSize: '0.8rem', 
+                          fontWeight: 'bold', 
+                          color: '#c084fc', 
+                          background: 'rgba(139, 92, 246, 0.1)', 
+                          padding: '2px 8px', 
+                          borderRadius: '6px' 
+                        }}>
+                          {progress.toFixed(0)}%
+                        </span>
+                      </div>
+
+                      {/* Lists badges */}
+                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', margin: '8px 0' }}>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', alignSelf: 'center', marginRight: '4px' }}>
+                          Listas:
+                        </span>
+                        {seller.lists.map((listIdx) => (
+                          <button
+                            key={listIdx}
+                            onClick={() => setSelectedList(listIdx)}
+                            className="btn-glass"
+                            style={{ 
+                              padding: '2px 6px', 
+                              fontSize: '0.7rem', 
+                              borderRadius: '4px',
+                              background: selectedList === listIdx ? 'rgba(0, 242, 254, 0.15)' : 'none',
+                              borderColor: selectedList === listIdx ? 'var(--primary)' : 'var(--border-glass)',
+                              color: selectedList === listIdx ? '#fff' : 'var(--text-secondary)'
+                            }}
+                          >
+                            {getExcelLabel(listIdx)}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Progress bar */}
+                      <div style={{ width: '100%', height: '6px', background: 'rgba(255,255,255,0.05)', borderRadius: '3px', overflow: 'hidden', marginTop: '8px' }}>
+                        <div style={{ width: `${progress}%`, height: '100%', background: 'linear-gradient(90deg, #a855f7 0%, #3b82f6 100%)', borderRadius: '3px' }} />
+                      </div>
+
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '6px' }}>
+                        <span>🟢 {seller.paidCount} Pagados</span>
+                        <span>🟡 {seller.reservedCount} Reservados</span>
+                        <span>📦 {seller.totalCount} Total</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', textAlign: 'center', margin: '20px 0' }}>
+                No hay vendedores activos asignados a listas.
+              </p>
+            )}
+          </div>
+
           {/* Quick reference card for total tickets statuses */}
           <div className="glass-panel" style={{ padding: '20px' }}>
             <h4 style={{ fontSize: '1rem', marginBottom: '12px' }}>Estado General del Inventario</h4>
@@ -808,6 +1321,99 @@ export default function AdminDashboard() {
                   {submitting ? 'Asignando...' : 'Asignar Número'}
                 </button>
               </form>
+            ) : isEditingTicket ? (
+              <form onSubmit={handleSaveTicketEdit} style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '24px' }}>
+                <h4 style={{ fontSize: '1rem', color: 'var(--primary)' }}>Editar Datos de Comprador</h4>
+                
+                {getListSellerInfo(selectedTicket.listIndex) && (
+                  <div style={{ 
+                    background: 'rgba(139, 92, 246, 0.08)', 
+                    border: '1px solid rgba(139, 92, 246, 0.2)', 
+                    padding: '8px 12px', 
+                    borderRadius: '8px',
+                    fontSize: '0.8rem',
+                    color: '#c084fc'
+                  }}>
+                    🧑‍💼 <strong>Vendedor Responsable:</strong> {getListSellerInfo(selectedTicket.listIndex)?.name}
+                  </div>
+                )}
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>Nombre del Comprador</label>
+                  <input 
+                    type="text" 
+                    required 
+                    value={buyerName} 
+                    onChange={(e) => setBuyerName(e.target.value)}
+                    placeholder="Ej. Juan Pérez"
+                    className="input-glass"
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>Teléfono (WhatsApp)</label>
+                  <input 
+                    type="tel" 
+                    required 
+                    value={buyerPhone} 
+                    onChange={(e) => setBuyerPhone(e.target.value)}
+                    placeholder="Ej. +56912345678"
+                    className="input-glass"
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>Correo Electrónico (Opcional)</label>
+                  <input 
+                    type="email" 
+                    value={buyerEmail} 
+                    onChange={(e) => setBuyerEmail(e.target.value)}
+                    placeholder="ejemplo@correo.com"
+                    className="input-glass"
+                  />
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>Medio Pago</label>
+                    <select 
+                      value={paymentMethod} 
+                      onChange={(e) => setPaymentMethod(e.target.value as any)}
+                      className="input-glass"
+                    >
+                      <option value="manual">Efectivo / Manual</option>
+                      <option value="transfer">Transferencia</option>
+                      <option value="flow">Flow.cl</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>Estado</label>
+                    <select 
+                      value={ticketStatus} 
+                      onChange={(e) => setTicketStatus(e.target.value as any)}
+                      className="input-glass"
+                    >
+                      <option value="paid">Pagado</option>
+                      <option value="reserved">Reservado</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+                  <button type="submit" className="btn-glow" disabled={submitting} style={{ flex: 1 }}>
+                    {submitting ? 'Guardando...' : '💾 Guardar'}
+                  </button>
+                  <button 
+                    type="button" 
+                    onClick={() => setIsEditingTicket(false)} 
+                    className="btn-glass" 
+                    style={{ flex: 1 }}
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </form>
             ) : (
               // If ticket is already reserved or paid, show information and modify actions
               <div style={{ marginTop: '24px' }}>
@@ -822,8 +1428,24 @@ export default function AdminDashboard() {
 
                 <div className="glass-panel" style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: '12px', marginBottom: '24px', fontSize: '0.9rem' }}>
                   <div style={{ display: 'grid', gridTemplateColumns: '90px 1fr', gap: '8px 12px' }}>
-                    <span style={{ color: 'var(--text-secondary)' }}>Nombre:</span>
-                    <strong>{selectedTicket.buyerName}</strong>
+                    <span style={{ color: 'var(--text-secondary)' }}>
+                      {selectedTicket.buyerName?.startsWith('Responsable:') ? 'Responsable:' : 'Comprador:'}
+                    </span>
+                    <strong>
+                      {selectedTicket.buyerName?.startsWith('Responsable:') 
+                        ? selectedTicket.buyerName.replace('Responsable:', '').trim() 
+                        : cleanBuyerName(selectedTicket.buyerName)}
+                    </strong>
+
+                    {parseSellerInfo(selectedTicket.buyerName) && (
+                      <>
+                        <span style={{ color: '#a855f7' }}>Vendedor:</span>
+                        <strong style={{ color: '#c084fc' }}>
+                          {parseSellerInfo(selectedTicket.buyerName)?.name}
+                          {parseSellerInfo(selectedTicket.buyerName)?.phone && ` (${parseSellerInfo(selectedTicket.buyerName)?.phone})`}
+                        </strong>
+                      </>
+                    )}
 
                     <span style={{ color: 'var(--text-secondary)' }}>Teléfono:</span>
                     <strong>{selectedTicket.buyerPhone}</strong>
@@ -857,6 +1479,39 @@ export default function AdminDashboard() {
                     </button>
                   )}
                   
+                  {selectedTicket.status === 'reserved' && selectedTicket.buyerPhone && (
+                    <a
+                      href={`https://api.whatsapp.com/send?phone=${selectedTicket.buyerPhone.replace(/[^0-9]/g, '')}&text=${encodeURIComponent(
+                        formatWhatsAppMessage(selectedTicket)
+                      )}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="btn-glass"
+                      style={{ 
+                        textDecoration: 'none', 
+                        display: 'inline-flex', 
+                        alignItems: 'center', 
+                        justifyContent: 'center', 
+                        gap: '8px', 
+                        borderColor: '#25D366', 
+                        color: '#25D366', 
+                        background: 'rgba(37, 211, 102, 0.05)',
+                        fontWeight: 'bold',
+                        textAlign: 'center'
+                      }}
+                    >
+                      💬 Enviar Cobro por WhatsApp
+                    </a>
+                  )}
+                  
+                  <button 
+                    onClick={() => setIsEditingTicket(true)}
+                    className="btn-glow"
+                    style={{ background: 'var(--primary)', border: 'none', boxShadow: 'none' }}
+                  >
+                    📝 Editar Datos de Comprador
+                  </button>
+
                   <button 
                     onClick={() => handleUpdateTicket(selectedTicket.id, { status: 'available' })}
                     className="btn-glass"
@@ -1075,6 +1730,10 @@ export default function AdminDashboard() {
         }
         .search-item:hover {
           border-color: var(--primary) !important;
+          background: rgba(255, 255, 255, 0.04) !important;
+        }
+        .seller-card:hover {
+          border-color: rgba(139, 92, 246, 0.3) !important;
           background: rgba(255, 255, 255, 0.04) !important;
         }
       `}</style>
