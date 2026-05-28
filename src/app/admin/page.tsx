@@ -56,6 +56,8 @@ export default function AdminDashboard() {
   const [showBulkModal, setShowBulkModal] = useState<boolean>(false);
   const [bulkType, setBulkType] = useState<'responsible' | 'buyer'>('responsible');
   const [isEditingTicket, setIsEditingTicket] = useState<boolean>(false);
+  const [selectedAdminTickets, setSelectedAdminTickets] = useState<string[]>([]);
+  const [showAdminBulkAssignModal, setShowAdminBulkAssignModal] = useState<boolean>(false);
 
   // Manual Assignment Form State
   const [buyerName, setBuyerName] = useState<string>('');
@@ -477,7 +479,66 @@ export default function AdminDashboard() {
       setSubmitting(false);
     }
   };
+  // Toggle ticket selection in Admin View
+  const handleAdminTicketClick = (ticket: Ticket) => {
+    if (ticket.status !== 'available') {
+      openTicketModal(ticket);
+      return;
+    }
+    
+    setSelectedAdminTickets((prev) => {
+      if (prev.includes(ticket.id)) {
+        return prev.filter((id) => id !== ticket.id);
+      } else {
+        return [...prev, ticket.id];
+      }
+    });
+  };
 
+  // Submit bulk assignment of selected tickets
+  const handleAdminBulkAssignSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (selectedAdminTickets.length === 0) return;
+    if (!buyerName.trim() || !buyerPhone.trim()) {
+      alert('Nombre y Teléfono son requeridos.');
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const res = await fetch('/api/tickets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ticketIds: selectedAdminTickets,
+          buyerName: buyerName.trim(),
+          buyerPhone: buyerPhone.trim(),
+          buyerEmail: buyerEmail.trim(),
+          paymentMethod,
+          status: ticketStatus,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Error al asignar números.');
+
+      // Refresh data and clear selection
+      await fetchData();
+      setSelectedAdminTickets([]);
+      setShowAdminBulkAssignModal(false);
+      
+      // Reset form
+      setBuyerName('');
+      setBuyerPhone('');
+      setBuyerEmail('');
+      
+      alert(`✓ ¡Asignación exitosa! Se registraron ${selectedAdminTickets.length} número(s) a nombre de ${buyerName.trim()}.`);
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
   // Open ticket details modal and initialize form values
   const openTicketModal = (ticket: Ticket) => {
     setSelectedTicket(ticket);
@@ -1016,6 +1077,7 @@ export default function AdminDashboard() {
           {/* List Status Numbers Grid */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '12px', marginBottom: '24px' }}>
             {currentListTickets.map((ticket) => {
+              const isSelected = selectedAdminTickets.includes(ticket.id);
               let bg = 'rgba(255,255,255,0.03)';
               let border = '1px solid var(--border-glass)';
               let color = 'var(--text-primary)';
@@ -1028,12 +1090,16 @@ export default function AdminDashboard() {
                 bg = 'var(--danger-glow)';
                 border = '1px solid var(--danger)';
                 color = '#f87171';
+              } else if (isSelected) {
+                bg = 'linear-gradient(135deg, rgba(127, 0, 255, 0.15) 0%, rgba(0, 242, 254, 0.15) 100%)';
+                border = '2px solid var(--primary)';
+                color = '#fff';
               }
 
               return (
                 <div 
                   key={ticket.id}
-                  onClick={() => openTicketModal(ticket)}
+                  onClick={() => handleAdminTicketClick(ticket)}
                   style={{
                     background: bg,
                     border,
@@ -1063,6 +1129,57 @@ export default function AdminDashboard() {
               );
             })}
           </div>
+
+          {selectedAdminTickets.length > 0 && (
+            <div style={{
+              background: 'rgba(0, 242, 254, 0.03)',
+              border: '1px solid rgba(0, 242, 254, 0.2)',
+              padding: '16px',
+              borderRadius: '12px',
+              marginBottom: '20px',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: '12px'
+            }}>
+              <div>
+                <span style={{ fontSize: '0.85rem', color: '#fff', fontWeight: 'bold' }}>
+                  🛒 {selectedAdminTickets.length} número(s) seleccionado(s) para asignación:
+                </span>
+                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '6px', maxHeight: '60px', overflowY: 'auto' }}>
+                  {selectedAdminTickets.map(id => (
+                    <span key={id} style={{ fontSize: '0.75rem', background: 'rgba(255,255,255,0.05)', padding: '2px 8px', borderRadius: '4px', border: '1px solid var(--border-glass)' }}>
+                      Lista {getExcelLabel(parseInt(id.split('-')[0]))} - N° {id.split('-')[1]}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button
+                  onClick={() => {
+                    setBuyerName('');
+                    setBuyerPhone('');
+                    setBuyerEmail('');
+                    setPaymentMethod('manual');
+                    setTicketStatus('paid');
+                    setShowAdminBulkAssignModal(true);
+                  }}
+                  className="btn-glow"
+                  style={{ padding: '8px 16px', fontSize: '0.85rem', whiteSpace: 'nowrap' }}
+                >
+                  📝 Registrar Datos
+                </button>
+                <button
+                  onClick={() => setSelectedAdminTickets([])}
+                  className="btn-glass"
+                  style={{ padding: '8px 16px', fontSize: '0.85rem', borderColor: 'var(--danger)', color: 'var(--danger)', whiteSpace: 'nowrap' }}
+                >
+                  Limpiar
+                </button>
+              </div>
+            </div>
+          )}
 
           {isListEmpty && (
             <div style={{ textAlign: 'center' }}>
@@ -1764,6 +1881,116 @@ export default function AdminDashboard() {
 
               <button type="submit" className="btn-glow" disabled={submitting} style={{ marginTop: '12px', width: '100%' }}>
                 {submitting ? 'Asignando lista...' : 'Confirmar Asignación Completa'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Assignment Modal (Selected Tickets) */}
+      {showAdminBulkAssignModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.7)',
+          backdropFilter: 'blur(8px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '16px',
+          zIndex: 200
+        }}>
+          <div className="glass-panel" style={{
+            background: 'var(--bg-surface-opaque)',
+            width: '100%',
+            maxWidth: '500px',
+            padding: '28px',
+            position: 'relative'
+          }}>
+            <button 
+              onClick={() => setShowAdminBulkAssignModal(false)}
+              style={{ position: 'absolute', top: '16px', right: '16px', background: 'none', border: 'none', color: 'var(--text-secondary)', fontSize: '1.5rem', cursor: 'pointer' }}
+            >
+              ✕
+            </button>
+
+            <h3 style={{ fontSize: '1.4rem', marginBottom: '8px' }}>Asignar {selectedAdminTickets.length} Número(s)</h3>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '20px' }}>
+              Registra los datos de una sola vez para los números seleccionados:
+            </p>
+            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '20px', maxHeight: '100px', overflowY: 'auto', background: 'rgba(0,0,0,0.2)', padding: '8px', borderRadius: '8px', border: '1px solid var(--border-glass)' }}>
+              {selectedAdminTickets.map(id => (
+                <span key={id} style={{ fontSize: '0.75rem', background: 'rgba(255,255,255,0.05)', padding: '2px 8px', borderRadius: '4px', border: '1px solid var(--border-glass)' }}>
+                  Lista {getExcelLabel(parseInt(id.split('-')[0]))} - N° {id.split('-')[1]}
+                </span>
+              ))}
+            </div>
+
+            <form onSubmit={handleAdminBulkAssignSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px', fontWeight: '600' }}>Nombre del Comprador</label>
+                <input 
+                  type="text" 
+                  required 
+                  value={buyerName} 
+                  onChange={(e) => setBuyerName(e.target.value)}
+                  placeholder="Ej. Juan Pérez"
+                  className="input-glass"
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px', fontWeight: '600' }}>Teléfono (WhatsApp)</label>
+                <input 
+                  type="tel" 
+                  required 
+                  value={buyerPhone} 
+                  onChange={(e) => setBuyerPhone(e.target.value)}
+                  placeholder="Ej. +56912345678"
+                  className="input-glass"
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px', fontWeight: '600' }}>Correo Electrónico (Opcional)</label>
+                <input 
+                  type="email" 
+                  value={buyerEmail} 
+                  onChange={(e) => setBuyerEmail(e.target.value)}
+                  placeholder="ejemplo@correo.com"
+                  className="input-glass"
+                />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>Medio Pago</label>
+                  <select 
+                    value={paymentMethod} 
+                    onChange={(e) => setPaymentMethod(e.target.value as any)}
+                    className="input-glass"
+                  >
+                    <option value="manual">Efectivo / Manual</option>
+                    <option value="transfer">Transferencia</option>
+                    <option value="flow">Flow.cl</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>Estado</label>
+                  <select 
+                    value={ticketStatus} 
+                    onChange={(e) => setTicketStatus(e.target.value as any)}
+                    className="input-glass"
+                  >
+                    <option value="paid">Pagado</option>
+                    <option value="reserved">Reservado</option>
+                  </select>
+                </div>
+              </div>
+
+              <button type="submit" className="btn-glow" disabled={submitting} style={{ marginTop: '12px', width: '100%' }}>
+                {submitting ? 'Asignando números...' : 'Confirmar Asignación'}
               </button>
             </form>
           </div>
